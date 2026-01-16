@@ -2,6 +2,8 @@
 set -e
 
 # ControlTheory Agent Installation Script
+# Version
+VERSION="v1.1.0"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -31,38 +33,42 @@ CLUSTER_NAME=""
 DEPLOYMENT_ENV=""
 
 usage() {
-  echo "ControlTheory Agent Installer"
-  echo ""
-  echo "Usage: $0 [options]"
-  echo ""
-  echo "General options:"
-  echo "  -o, --operation <install|uninstall>  Operation to perform (default: install)"
-  echo "  -p, --platform <docker|k8s>          Target platform (default: k8s)"
-  echo ""
-  echo "Options:"
-  echo "  -i, --org-id <id>                    Organization identifier (required for install)"
-  echo "      --config-endpoint <url>          Config endpoint URL (required for install)"
-  echo "      --data-endpoint <host:port>      Data endpoint address (required for install)"
-  echo "      --cluster-name <name>            Cluster/host name (required for k8s, optional for docker - defaults to 'docker')"
-  echo "  -e, --env <environment>              Deployment environment (required for install)"
-  echo ""
-  echo "Options for docker platform:"
-  echo "      --docker-token <token>           Docker admission token (required for install)"
-  echo "      --docker-tag <tag>               Docker image tag (default: v1.3.9)"
-  echo ""
-  echo "Options for k8s platform:"
-  echo "      --ds-token <token>               DaemonSet admission token (required for ds/both)"
-  echo "      --cluster-token <token>          Cluster admission token (required for cluster/both)"
-  echo "  -t, --type <ds|cluster|both>          Type to install (default: both)"
-  echo "      --kubeconfig <file>              Path to kubeconfig file (default: ~/.kube/config)"
-  echo "  -n, --namespace <namespace>          Kubernetes namespace (default: controltheory)"
-  echo ""
-  echo "Examples:"
-  echo "  $0 -i okz30akqj --ds-token <t1> --cluster-token <t2> --config-endpoint <url> --data-endpoint <h:p> --cluster-name mycluster -e prod"
-  echo "  $0 -i okz30akqj -t ds --ds-token <t> --config-endpoint <url> --data-endpoint <h:p> --cluster-name mycluster -e dev"
-  echo "  $0 -i okz30akqj -p docker --docker-token <t> --config-endpoint <url> --data-endpoint <h:p> --cluster-name myhost -e prod"
-  echo "  $0 -o uninstall"
-  echo "  $0 -o uninstall -p docker"
+  cat <<EOF
+ControlTheory Agent Installer $VERSION
+
+Usage: $0 [options]
+
+General options:
+  -o, --operation <install|uninstall>  Operation to perform (default: install)
+  -p, --platform <docker|k8s>          Target platform (default: k8s)
+  -h, --help                           Show this help message
+  -v, --version                        Show version
+
+Options:
+  -i, --org-id <id>                    Organization identifier (required for install)
+      --config-endpoint <url>          Config endpoint URL (required for install)
+      --data-endpoint <host:port>      Data endpoint address (required for install)
+      --cluster-name <name>            Cluster/host name (required for k8s, optional for docker - defaults to 'docker')
+  -e, --env <environment>              Deployment environment (required for install)
+
+Options for docker platform:
+      --docker-token <token>           Docker admission token (required for install)
+      --docker-tag <tag>               Docker image tag (default: v1.3.9)
+
+Options for k8s platform:
+      --ds-token <token>               DaemonSet admission token (required for ds/both)
+      --cluster-token <token>          Cluster admission token (required for cluster/both)
+  -t, --type <ds|cluster|both>         Type to install (default: both)
+      --kubeconfig <file>              Path to kubeconfig file (default: ~/.kube/config)
+  -n, --namespace <namespace>          Kubernetes namespace (default: controltheory)
+
+Examples:
+  $0 -i okz30akqj --ds-token <t1> --cluster-token <t2> --config-endpoint <url> --data-endpoint <h:p> --cluster-name mycluster -e prod
+  $0 -i okz30akqj -t ds --ds-token <t> --config-endpoint <url> --data-endpoint <h:p> --cluster-name mycluster -e dev
+  $0 -i okz30akqj -p docker --docker-token <t> --config-endpoint <url> --data-endpoint <h:p> --cluster-name myhost -e prod
+  $0 -o uninstall
+  $0 -o uninstall -p docker
+EOF
   exit 1
 }
 
@@ -127,6 +133,10 @@ while [ $# -gt 0 ]; do
       ;;
     -h|--help)
       usage
+      ;;
+    -v|--version)
+      echo "$VERSION"
+      exit 0
       ;;
     *)
       echo "Unknown option: $1"
@@ -415,3 +425,6 @@ case "$PLATFORM" in
     esac
     ;;
 esac
+
+echo ""
+echo "Completed: $(date -u '+%Y-%m-%d %H:%M:%S UTC') | $VERSION"
