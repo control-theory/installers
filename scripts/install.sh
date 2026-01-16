@@ -43,7 +43,7 @@ usage() {
   echo "  -i, --org-id <id>                    Organization identifier (required for install)"
   echo "      --config-endpoint <url>          Config endpoint URL (required for install)"
   echo "      --data-endpoint <host:port>      Data endpoint address (required for install)"
-  echo "      --cluster-name <name>            Cluster/host name (required for install)"
+  echo "      --cluster-name <name>            Cluster/host name (required for k8s, optional for docker - defaults to hostname)"
   echo "  -e, --env <environment>              Deployment environment (required for install)"
   echo ""
   echo "Options for docker platform:"
@@ -169,8 +169,9 @@ validate_config() {
     echo "Error: --data-endpoint is required for install"
     usage
   fi
-  if [ -z "$CLUSTER_NAME" ]; then
-    echo "Error: --cluster-name is required for install"
+  # cluster_name is required for k8s, optional for docker
+  if [ -z "$CLUSTER_NAME" ] && [ "$PLATFORM" = "k8s" ]; then
+    echo "Error: --cluster-name is required for k8s install"
     usage
   fi
   if [ -z "$DEPLOYMENT_ENV" ]; then
@@ -225,22 +226,30 @@ docker_install() {
   echo "Container Name: $CONTAINER_NAME"
   echo ""
 
-  docker run -d \
-    --name "$CONTAINER_NAME" \
+  # Build docker run command with optional CLUSTER_NAME
+  DOCKER_CMD="docker run -d \
+    --name $CONTAINER_NAME \
     --restart unless-stopped \
     --privileged \
-    -v "./data:/data" \
+    -v ./data:/data \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v /var/lib/docker/containers:/var/lib/docker/containers:ro \
     -v /var/log:/var/log \
-    -e CONTROLPLANE_ENDPOINT="$CONFIG_ENDPOINT" \
-    -e ADMISSION_TOKEN="$DOCKER_ADMISSION_TOKEN" \
-    -e BUTLER_ENDPOINT="$DATA_ENDPOINT" \
-    -e CLUSTER_NAME="$CLUSTER_NAME" \
-    -e DEPLOYMENT_ENV="$DEPLOYMENT_ENV" \
+    -e CONTROLPLANE_ENDPOINT=$CONFIG_ENDPOINT \
+    -e ADMISSION_TOKEN=$DOCKER_ADMISSION_TOKEN \
+    -e BUTLER_ENDPOINT=$DATA_ENDPOINT \
+    -e DEPLOYMENT_ENV=$DEPLOYMENT_ENV"
+
+  if [ -n "$CLUSTER_NAME" ]; then
+    DOCKER_CMD="$DOCKER_CMD -e CLUSTER_NAME=$CLUSTER_NAME"
+  fi
+
+  DOCKER_CMD="$DOCKER_CMD \
     -p 4317:4317 \
     -p 4318:4318 \
-    "${DOCKER_IMAGE}:${DOCKER_IMAGE_TAG}"
+    ${DOCKER_IMAGE}:${DOCKER_IMAGE_TAG}"
+
+  eval "$DOCKER_CMD"
 
   echo ""
   echo "Docker installation complete!"
