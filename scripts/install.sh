@@ -43,7 +43,7 @@ usage() {
   echo "  -i, --org-id <id>                    Organization identifier (required for install)"
   echo "      --config-endpoint <url>          Config endpoint URL (required for install)"
   echo "      --data-endpoint <host:port>      Data endpoint address (required for install)"
-  echo "      --cluster-name <name>            Cluster/host name (required for k8s, optional for docker - defaults to hostname)"
+  echo "      --cluster-name <name>            Cluster/host name (required for k8s, optional for docker - defaults to 'docker')"
   echo "  -e, --env <environment>              Deployment environment (required for install)"
   echo ""
   echo "Options for docker platform:"
@@ -240,9 +240,11 @@ docker_install() {
     -e BUTLER_ENDPOINT=$DATA_ENDPOINT \
     -e DEPLOYMENT_ENV=$DEPLOYMENT_ENV"
 
-  if [ -n "$CLUSTER_NAME" ]; then
-    DOCKER_CMD="$DOCKER_CMD -e CLUSTER_NAME=$CLUSTER_NAME"
+  # Default cluster name to "docker" for docker platform
+  if [ -z "$CLUSTER_NAME" ]; then
+    CLUSTER_NAME="docker"
   fi
+  DOCKER_CMD="$DOCKER_CMD -e CLUSTER_NAME=$CLUSTER_NAME"
 
   DOCKER_CMD="$DOCKER_CMD \
     -p 4317:4317 \
