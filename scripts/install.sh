@@ -3,7 +3,7 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.1.0"
+VERSION="v1.1.1"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -293,6 +293,7 @@ k8s_install_ds() {
     --namespace="$NAMESPACE" \
     --set daemonset.controlplane.admission_token="$DS_ADMISSION_TOKEN" \
     --set daemonset.controlplane.endpoint="$CONFIG_ENDPOINT" \
+    --set daemonset.butler_endpoint="$DATA_ENDPOINT" \
     --set daemonset.cluster_name="$CLUSTER_NAME" \
     --set daemonset.deployment_env="$DEPLOYMENT_ENV"
 
@@ -306,6 +307,7 @@ k8s_install_cluster() {
     --namespace="$NAMESPACE" \
     --set deployment.controlplane.admission_token="$CLUSTER_ADMISSION_TOKEN" \
     --set deployment.controlplane.endpoint="$CONFIG_ENDPOINT" \
+    --set deployment.butler_endpoint="$DATA_ENDPOINT" \
     --set deployment.cluster_name="$CLUSTER_NAME" \
     --set deployment.deployment_env="$DEPLOYMENT_ENV"
 
