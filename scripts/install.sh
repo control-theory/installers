@@ -3,7 +3,7 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.1.1"
+VERSION="v1.1.2"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -20,7 +20,7 @@ DOCKER_ADMISSION_TOKEN=""
 CONFIG_ENDPOINT=""
 DATA_ENDPOINT=""
 DOCKER_IMAGE="controltheory/supervisor"
-DOCKER_IMAGE_TAG="v1.3.9"
+DOCKER_IMAGE_TAG="v1.3.10"
 
 # Defaults
 OPERATION="install"
@@ -296,9 +296,6 @@ k8s_install_ds() {
     --set daemonset.butler_endpoint="$DATA_ENDPOINT" \
     --set daemonset.cluster_name="$CLUSTER_NAME" \
     --set daemonset.deployment_env="$DEPLOYMENT_ENV"
-
-  echo "Waiting for DaemonSet to be ready..."
-  $KUBECTL rollout status daemonset/"$RELEASE_NAME_DS" -n "$NAMESPACE" --timeout=120s
 }
 
 k8s_install_cluster() {
@@ -310,9 +307,6 @@ k8s_install_cluster() {
     --set deployment.butler_endpoint="$DATA_ENDPOINT" \
     --set deployment.cluster_name="$CLUSTER_NAME" \
     --set deployment.deployment_env="$DEPLOYMENT_ENV"
-
-  echo "Waiting for Cluster Agent to be ready..."
-  $KUBECTL rollout status deployment/"$RELEASE_NAME_CLUSTER" -n "$NAMESPACE" --timeout=120s
 }
 
 k8s_uninstall_ds() {
