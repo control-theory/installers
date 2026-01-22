@@ -1,9 +1,9 @@
-#!/bin/sh
+#!/bin/bash
 set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.1.2"
+VERSION="v1.2.0"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -12,6 +12,8 @@ VERSION="v1.1.2"
 #   ./install.sh -i <org-id> -p docker --docker-token <t> --config-endpoint <url> --data-endpoint <h:p> --cluster-name <name> -e <env>
 #   ./install.sh -o uninstall
 #   ./install.sh -o uninstall -p docker
+#   ./install.sh -o status
+#   ./install.sh -o preflight
 
 # Embedded configuration
 DS_ADMISSION_TOKEN=""
@@ -39,10 +41,10 @@ ControlTheory Agent Installer $VERSION
 Usage: $0 [options]
 
 General options:
-  -o, --operation <install|uninstall>  Operation to perform (default: install)
-  -p, --platform <docker|k8s>          Target platform (default: k8s)
-  -h, --help                           Show this help message
-  -v, --version                        Show version
+  -o, --operation <op>   Operation: install, uninstall, status, preflight (default: install)
+  -p, --platform <p>     Target platform: docker, k8s (default: k8s)
+  -h, --help             Show this help message
+  -v, --version          Show version
 
 Options:
   -i, --org-id <id>                    Organization identifier (required for install)
@@ -68,6 +70,10 @@ Examples:
   $0 -i okz30akqj -p docker --docker-token <t> --config-endpoint <url> --data-endpoint <h:p> --cluster-name myhost -e prod
   $0 -o uninstall
   $0 -o uninstall -p docker
+  $0 -o status
+  $0 -o status -p docker
+  $0 -o preflight
+  $0 -o preflight --kubeconfig ~/.kube/ctstage
 EOF
   exit 1
 }
@@ -147,8 +153,8 @@ done
 
 # Validate arguments
 
-if [ "$OPERATION" != "install" ] && [ "$OPERATION" != "uninstall" ]; then
-  echo "Error: Operation must be 'install' or 'uninstall'"
+if [ "$OPERATION" != "install" ] && [ "$OPERATION" != "uninstall" ] && [ "$OPERATION" != "status" ] && [ "$OPERATION" != "preflight" ]; then
+  echo "Error: Operation must be 'install', 'uninstall', 'status', or 'preflight'"
   usage
 fi
 
@@ -287,8 +293,51 @@ docker_uninstall() {
 #
 # Kubernetes functions
 #
+
+# Quick preflight check - warns if nodes have insufficient resources
+quick_preflight_check() {
+  local total_nodes=0
+  local problem_nodes=0
+  local ds_cpu_mc=$(cpu_to_millicores "$PREFLIGHT_CPU_REQUEST")
+  local ds_mem_mi=$(memory_to_mi "$PREFLIGHT_MEMORY_REQUEST")
+
+  local nodes=$($KUBECTL get nodes -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
+  [[ -z "$nodes" ]] && return
+
+  for node in $nodes; do
+    total_nodes=$((total_nodes + 1))
+
+    local alloc_cpu=$($KUBECTL get node "$node" -o jsonpath='{.status.allocatable.cpu}' 2>/dev/null)
+    local alloc_mem=$($KUBECTL get node "$node" -o jsonpath='{.status.allocatable.memory}' 2>/dev/null)
+    local alloc_cpu_mc=$(cpu_to_millicores "$alloc_cpu")
+    local alloc_mem_mi=$(memory_to_mi "$alloc_mem")
+
+    local cpu_reqs=$($KUBECTL get pods --all-namespaces --field-selector spec.nodeName="$node" \
+        -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.resources.requests.cpu}{" "}{end}{end}' 2>/dev/null)
+    local mem_reqs=$($KUBECTL get pods --all-namespaces --field-selector spec.nodeName="$node" \
+        -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.resources.requests.memory}{" "}{end}{end}' 2>/dev/null)
+
+    local used_cpu_mc=$(sum_cpu_requests "$cpu_reqs")
+    local used_mem_mi=$(sum_memory_requests "$mem_reqs")
+
+    local avail_cpu_mc=$((alloc_cpu_mc - used_cpu_mc))
+    local avail_mem_mi=$((alloc_mem_mi - used_mem_mi))
+
+    if [[ $avail_cpu_mc -lt $ds_cpu_mc ]] || [[ $avail_mem_mi -lt $ds_mem_mi ]]; then
+      problem_nodes=$((problem_nodes + 1))
+    fi
+  done
+
+  if [[ $problem_nodes -gt 0 ]]; then
+    echo ""
+    echo "WARNING: $problem_nodes of $total_nodes nodes have insufficient resources (use -o preflight for details)"
+    echo ""
+  fi
+}
+
 k8s_install_ds() {
   echo "Installing AIgent DaemonSet (node log collection)..."
+  quick_preflight_check
   $HELM upgrade --install --create-namespace "$RELEASE_NAME_DS" ct-helm/aigent-ds \
     --namespace="$NAMESPACE" \
     --set daemonset.controlplane.admission_token="$DS_ADMISSION_TOKEN" \
@@ -391,6 +440,469 @@ k8s_uninstall() {
 }
 
 #
+# Status functions
+#
+k8s_status() {
+  echo ""
+  echo "=============================================================================="
+  echo "CONTROLTHEORY AGENT STATUS (Kubernetes)"
+  echo "=============================================================================="
+  echo "Date:        $(date '+%Y-%m-%d %H:%M:%S')"
+  echo "Kubeconfig:  $KUBECONFIG_FILE"
+  echo "Namespace:   $NAMESPACE"
+  echo "=============================================================================="
+  echo ""
+
+  # Check helm releases
+  echo "HELM RELEASES"
+  echo "-------------"
+  local ds_release=$($HELM list -n "$NAMESPACE" -f "^${RELEASE_NAME_DS}$" -q 2>/dev/null)
+  local cluster_release=$($HELM list -n "$NAMESPACE" -f "^${RELEASE_NAME_CLUSTER}$" -q 2>/dev/null)
+
+  if [[ -n "$ds_release" ]]; then
+    local ds_info=$($HELM list -n "$NAMESPACE" -f "^${RELEASE_NAME_DS}$" --output json 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+    local ds_version=$($HELM list -n "$NAMESPACE" -f "^${RELEASE_NAME_DS}$" --output json 2>/dev/null | grep -o '"chart":"[^"]*"' | cut -d'"' -f4)
+    printf "  %-20s %-12s %s\n" "$RELEASE_NAME_DS" "$ds_info" "$ds_version"
+  else
+    printf "  %-20s %-12s\n" "$RELEASE_NAME_DS" "NOT INSTALLED"
+  fi
+
+  if [[ -n "$cluster_release" ]]; then
+    local cluster_info=$($HELM list -n "$NAMESPACE" -f "^${RELEASE_NAME_CLUSTER}$" --output json 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+    local cluster_version=$($HELM list -n "$NAMESPACE" -f "^${RELEASE_NAME_CLUSTER}$" --output json 2>/dev/null | grep -o '"chart":"[^"]*"' | cut -d'"' -f4)
+    printf "  %-20s %-12s %s\n" "$RELEASE_NAME_CLUSTER" "$cluster_info" "$cluster_version"
+  else
+    printf "  %-20s %-12s\n" "$RELEASE_NAME_CLUSTER" "NOT INSTALLED"
+  fi
+
+  echo ""
+
+  # Check pods
+  echo "PODS"
+  echo "----"
+  local pods=$($KUBECTL get pods -n "$NAMESPACE" -l 'app.kubernetes.io/name in (aigent-ds, aigent-cluster)' --no-headers 2>/dev/null)
+  if [[ -n "$pods" ]]; then
+    printf "  %-50s %-12s %-10s %s\n" "NAME" "STATUS" "RESTARTS" "AGE"
+    printf "  %-50s %-12s %-10s %s\n" "----" "------" "--------" "---"
+    $KUBECTL get pods -n "$NAMESPACE" -l 'app.kubernetes.io/name in (aigent-ds, aigent-cluster)' --no-headers 2>/dev/null | while read -r line; do
+      local name=$(echo "$line" | awk '{print $1}')
+      local ready=$(echo "$line" | awk '{print $2}')
+      local status=$(echo "$line" | awk '{print $3}')
+      local restarts=$(echo "$line" | awk '{print $4}')
+      local age=$(echo "$line" | awk '{print $5}')
+      printf "  %-50s %-12s %-10s %s\n" "$name" "$status" "$restarts" "$age"
+    done
+  else
+    echo "  No ControlTheory pods found in namespace $NAMESPACE"
+  fi
+
+  echo ""
+
+  # Summary
+  echo "SUMMARY"
+  echo "-------"
+  if [[ -n "$ds_release" ]] || [[ -n "$cluster_release" ]]; then
+    [[ -n "$ds_release" ]] && echo "  DaemonSet:     INSTALLED"
+    [[ -z "$ds_release" ]] && echo "  DaemonSet:     not installed"
+    [[ -n "$cluster_release" ]] && echo "  Cluster Agent: INSTALLED"
+    [[ -z "$cluster_release" ]] && echo "  Cluster Agent: not installed"
+  else
+    echo "  ControlTheory Agent is NOT installed"
+  fi
+}
+
+docker_status() {
+  echo ""
+  echo "=============================================================================="
+  echo "CONTROLTHEORY AGENT STATUS (Docker)"
+  echo "=============================================================================="
+  echo "Date:        $(date '+%Y-%m-%d %H:%M:%S')"
+  echo "Container:   $CONTAINER_NAME"
+  echo "=============================================================================="
+  echo ""
+
+  # Check container
+  echo "CONTAINER"
+  echo "---------"
+  local container_info=$(docker ps -a --filter "name=^${CONTAINER_NAME}$" --format "{{.Status}}\t{{.Image}}\t{{.Ports}}" 2>/dev/null)
+
+  if [[ -n "$container_info" ]]; then
+    local status=$(echo "$container_info" | cut -f1)
+    local image=$(echo "$container_info" | cut -f2)
+    local ports=$(echo "$container_info" | cut -f3)
+    echo "  Name:    $CONTAINER_NAME"
+    echo "  Status:  $status"
+    echo "  Image:   $image"
+    echo "  Ports:   ${ports:-<none>}"
+  else
+    echo "  Container '$CONTAINER_NAME' not found"
+  fi
+
+  echo ""
+
+  # Summary
+  echo "SUMMARY"
+  echo "-------"
+  if [[ -n "$container_info" ]]; then
+    if echo "$container_info" | grep -qi "^up"; then
+      echo "  ControlTheory Agent is RUNNING"
+    else
+      echo "  ControlTheory Agent is STOPPED"
+    fi
+  else
+    echo "  ControlTheory Agent is NOT installed"
+  fi
+}
+
+#
+# Preflight Check - Analyze cluster nodes for DaemonSet placement
+#
+PREFLIGHT_VERSION="v1.2.1"
+PREFLIGHT_CPU_REQUEST="200m"
+PREFLIGHT_MEMORY_REQUEST="500Mi"
+
+# Convert CPU to millicores
+cpu_to_millicores() {
+    local cpu="$1"
+    if [[ "$cpu" =~ ^([0-9]+)m$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+    elif [[ "$cpu" =~ ^([0-9]+)$ ]]; then
+        echo "$((${BASH_REMATCH[1]} * 1000))"
+    elif [[ "$cpu" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+        local whole="${BASH_REMATCH[1]}"
+        local frac="${BASH_REMATCH[2]}"
+        frac=$(printf "%-3s" "$frac" | tr ' ' '0' | cut -c1-3)
+        echo "$((whole * 1000 + 10#$frac))"
+    else
+        echo "0"
+    fi
+}
+
+# Convert memory to Mi (mebibytes)
+memory_to_mi() {
+    local mem="$1"
+    if [[ -z "$mem" ]]; then
+        echo "0"
+        return
+    fi
+
+    if [[ "$mem" =~ ^([0-9]+)Ki$ ]]; then
+        echo "$((${BASH_REMATCH[1]} / 1024))"
+    elif [[ "$mem" =~ ^([0-9]+)Mi$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+    elif [[ "$mem" =~ ^([0-9]+)Gi$ ]]; then
+        echo "$((${BASH_REMATCH[1]} * 1024))"
+    elif [[ "$mem" =~ ^([0-9]+)$ ]]; then
+        echo "$((${BASH_REMATCH[1]} / 1024 / 1024))"
+    else
+        echo "0"
+    fi
+}
+
+# Sum CPU requests
+sum_cpu_requests() {
+    local total=0
+    for req in $1; do
+        local mc=$(cpu_to_millicores "$req")
+        total=$((total + mc))
+    done
+    echo "$total"
+}
+
+# Sum memory requests
+sum_memory_requests() {
+    local total=0
+    for req in $1; do
+        local mi=$(memory_to_mi "$req")
+        total=$((total + mi))
+    done
+    echo "$total"
+}
+
+# Show over-provisioned pods on a node
+show_overprovisioned_pods() {
+    local node="$1"
+    local sort_by="$2"
+
+    $KUBECTL top pods --all-namespaces --no-headers 2>/dev/null > /tmp/node_metrics_$$ || true
+
+    if [[ ! -s /tmp/node_metrics_$$ ]]; then
+        echo "  (metrics-server unavailable - cannot show over-provisioned pods)"
+        rm -f /tmp/node_metrics_$$ 2>/dev/null
+        return
+    fi
+
+    echo ""
+    if [[ "$sort_by" == "cpu" ]]; then
+        echo "  Over-provisioned pods (using <50% of requested CPU), sorted by REQ CPU:"
+    else
+        echo "  Over-provisioned pods (using <50% of requested MEM), sorted by REQ MEM:"
+    fi
+    echo "  -----------------------------------------------------------------------"
+    printf "  %-45s %8s %8s %8s %8s\n" "POD" "REQ CPU" "USE CPU" "REQ MEM" "USE MEM"
+    printf "  %-45s %8s %8s %8s %8s\n" "---" "-------" "-------" "-------" "-------"
+
+    $KUBECTL get pods --all-namespaces --field-selector spec.nodeName="$node" \
+        -o jsonpath='{range .items[*]}{.metadata.namespace}{"\t"}{.metadata.name}{"\t"}{range .spec.containers[*]}{.resources.requests.cpu}{" "}{end}{"\t"}{range .spec.containers[*]}{.resources.requests.memory}{" "}{end}{"\n"}{end}' 2>/dev/null | \
+    while IFS=$'\t' read -r ns name cpu_reqs mem_reqs; do
+        [[ -z "$name" ]] && continue
+
+        local pod_cpu_mc=0
+        for req in $cpu_reqs; do
+            local mc
+            if [[ "$req" =~ ^([0-9]+)m$ ]]; then
+                mc="${BASH_REMATCH[1]}"
+            elif [[ "$req" =~ ^([0-9]+)$ ]]; then
+                mc=$((${BASH_REMATCH[1]} * 1000))
+            elif [[ "$req" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+                local whole="${BASH_REMATCH[1]}"
+                local frac="${BASH_REMATCH[2]}"
+                frac=$(printf "%-3s" "$frac" | tr ' ' '0' | cut -c1-3)
+                mc=$((whole * 1000 + 10#$frac))
+            else
+                mc=0
+            fi
+            pod_cpu_mc=$((pod_cpu_mc + mc))
+        done
+
+        local pod_mem_mi=0
+        for req in $mem_reqs; do
+            local mi
+            if [[ "$req" =~ ^([0-9]+)Ki$ ]]; then
+                mi=$((${BASH_REMATCH[1]} / 1024))
+            elif [[ "$req" =~ ^([0-9]+)Mi$ ]]; then
+                mi="${BASH_REMATCH[1]}"
+            elif [[ "$req" =~ ^([0-9]+)Gi$ ]]; then
+                mi=$((${BASH_REMATCH[1]} * 1024))
+            elif [[ "$req" =~ ^([0-9]+)$ ]]; then
+                mi=$((${BASH_REMATCH[1]} / 1024 / 1024))
+            else
+                mi=0
+            fi
+            pod_mem_mi=$((pod_mem_mi + mi))
+        done
+
+        local metrics_line=$(grep "^${ns}[[:space:]]" /tmp/node_metrics_$$ | grep "[[:space:]]${name}[[:space:]]" 2>/dev/null | head -1)
+        [[ -z "$metrics_line" ]] && continue
+
+        local actual_cpu_raw=$(echo "$metrics_line" | awk '{print $3}')
+        local actual_mem_raw=$(echo "$metrics_line" | awk '{print $4}')
+
+        local actual_cpu_mc=0
+        if [[ "$actual_cpu_raw" =~ ^([0-9]+)m$ ]]; then
+            actual_cpu_mc="${BASH_REMATCH[1]}"
+        elif [[ "$actual_cpu_raw" =~ ^([0-9]+)$ ]]; then
+            actual_cpu_mc=$((${BASH_REMATCH[1]} * 1000))
+        fi
+
+        local actual_mem_mi=0
+        if [[ "$actual_mem_raw" =~ ^([0-9]+)Mi$ ]]; then
+            actual_mem_mi="${BASH_REMATCH[1]}"
+        elif [[ "$actual_mem_raw" =~ ^([0-9]+)Gi$ ]]; then
+            actual_mem_mi=$((${BASH_REMATCH[1]} * 1024))
+        elif [[ "$actual_mem_raw" =~ ^([0-9]+)Ki$ ]]; then
+            actual_mem_mi=$((${BASH_REMATCH[1]} / 1024))
+        fi
+
+        local is_overprovisioned=false
+        if [[ "$sort_by" == "cpu" ]]; then
+            if [[ $pod_cpu_mc -gt 0 ]] && [[ $((actual_cpu_mc * 100 / pod_cpu_mc)) -lt 50 ]]; then
+                is_overprovisioned=true
+            fi
+        else
+            if [[ $pod_mem_mi -gt 0 ]] && [[ $((actual_mem_mi * 100 / pod_mem_mi)) -lt 50 ]]; then
+                is_overprovisioned=true
+            fi
+        fi
+
+        if $is_overprovisioned; then
+            if [[ "$sort_by" == "cpu" ]]; then
+                printf "%08d\t%s\t%sm\t%s\t%sMi\t%s\n" "$pod_cpu_mc" "$name" "$pod_cpu_mc" "$actual_cpu_raw" "$pod_mem_mi" "$actual_mem_raw"
+            else
+                printf "%08d\t%s\t%sm\t%s\t%sMi\t%s\n" "$pod_mem_mi" "$name" "$pod_cpu_mc" "$actual_cpu_raw" "$pod_mem_mi" "$actual_mem_raw"
+            fi
+        fi
+    done | sort -t$'\t' -k1 -rn | head -10 | while IFS=$'\t' read -r _ podname req_cpu use_cpu req_mem use_mem; do
+        printf "  %-45s %8s %8s %8s %8s\n" "$podname" "$req_cpu" "$use_cpu" "$req_mem" "$use_mem"
+    done
+
+    rm -f /tmp/node_metrics_$$ 2>/dev/null
+    echo ""
+}
+
+preflight_check() {
+    echo ""
+    echo "=============================================================================="
+    echo "DAEMONSET PLACEMENT ANALYSIS                                   $PREFLIGHT_VERSION"
+    echo "=============================================================================="
+    echo "Date:              $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "Kubeconfig:        $KUBECONFIG_FILE"
+    echo "DaemonSet CPU:     $PREFLIGHT_CPU_REQUEST"
+    echo "DaemonSet Memory:  $PREFLIGHT_MEMORY_REQUEST"
+    echo "=============================================================================="
+    echo ""
+
+    local DS_CPU_MC=$(cpu_to_millicores "$PREFLIGHT_CPU_REQUEST")
+    local DS_MEM_MI=$(memory_to_mi "$PREFLIGHT_MEMORY_REQUEST")
+
+    # Get PriorityClasses
+    echo "PRIORITY CLASSES"
+    echo "----------------"
+    local PRIORITY_CLASSES=$($KUBECTL get priorityclasses -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.value}{"\n"}{end}' 2>/dev/null | sort -t$'\t' -k2 -rn)
+    if [[ -n "$PRIORITY_CLASSES" ]]; then
+        printf "%-30s %s\n" "NAME" "VALUE"
+        printf "%-30s %s\n" "----" "-----"
+        echo "$PRIORITY_CLASSES" | while read -r line; do
+            local NAME=$(echo "$line" | cut -f1)
+            local VALUE=$(echo "$line" | cut -f2)
+            printf "%-30s %s\n" "$NAME" "$VALUE"
+        done
+    else
+        echo "  No PriorityClasses found (using default scheduling priority)"
+    fi
+    echo ""
+
+    # Get all nodes
+    local NODES=$($KUBECTL get nodes -o jsonpath='{.items[*].metadata.name}')
+
+    if [[ -z "$NODES" ]]; then
+        echo "Error: No nodes found or unable to connect to cluster"
+        exit 1
+    fi
+
+    local ALL_TAINTS_LIST=""
+    local SUMMARY_FILE=$(mktemp)
+    trap "rm -f $SUMMARY_FILE /tmp/node_metrics_$$ 2>/dev/null" EXIT
+
+    echo "NODE DETAILS"
+    echo "------------"
+
+    for NODE in $NODES; do
+        local STATUS=$($KUBECTL get node "$NODE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+
+        local TAINTS_JSON=$($KUBECTL get node "$NODE" -o jsonpath='{.spec.taints}')
+        local TAINT_LIST=""
+        if [[ -n "$TAINTS_JSON" && "$TAINTS_JSON" != "null" ]]; then
+            TAINT_LIST=$($KUBECTL get node "$NODE" -o jsonpath='{range .spec.taints[*]}{.key}={.value}:{.effect}{","}{end}' | sed 's/,$//')
+
+            IFS=',' read -ra TAINT_ARR <<< "$TAINT_LIST"
+            for t in "${TAINT_ARR[@]}"; do
+                if [[ -n "$t" ]]; then
+                    local KEY=$(echo "$t" | cut -d'=' -f1)
+                    local EFFECT=$(echo "$t" | grep -oE ':(NoSchedule|NoExecute|PreferNoSchedule)$' | tr -d ':')
+                    local TAINT_ENTRY="$KEY:$EFFECT"
+                    if [[ ! "$ALL_TAINTS_LIST" =~ "$TAINT_ENTRY" ]]; then
+                        ALL_TAINTS_LIST="${ALL_TAINTS_LIST:+$ALL_TAINTS_LIST }$TAINT_ENTRY"
+                    fi
+                fi
+            done
+        fi
+
+        local ALLOC_CPU=$($KUBECTL get node "$NODE" -o jsonpath='{.status.allocatable.cpu}')
+        local ALLOC_MEM=$($KUBECTL get node "$NODE" -o jsonpath='{.status.allocatable.memory}')
+        local ALLOC_PODS=$($KUBECTL get node "$NODE" -o jsonpath='{.status.allocatable.pods}')
+
+        local ALLOC_CPU_MC=$(cpu_to_millicores "$ALLOC_CPU")
+        local ALLOC_MEM_MI=$(memory_to_mi "$ALLOC_MEM")
+
+        local CPU_REQS=$($KUBECTL get pods --all-namespaces --field-selector spec.nodeName="$NODE" \
+            -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.resources.requests.cpu}{" "}{end}{end}' 2>/dev/null)
+        local MEM_REQS=$($KUBECTL get pods --all-namespaces --field-selector spec.nodeName="$NODE" \
+            -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.resources.requests.memory}{" "}{end}{end}' 2>/dev/null)
+
+        local USED_CPU_MC=$(sum_cpu_requests "$CPU_REQS")
+        local USED_MEM_MI=$(sum_memory_requests "$MEM_REQS")
+
+        local AVAIL_CPU_MC=$((ALLOC_CPU_MC - USED_CPU_MC))
+        local AVAIL_MEM_MI=$((ALLOC_MEM_MI - USED_MEM_MI))
+
+        local RUNNING_PODS=$($KUBECTL get pods --all-namespaces --field-selector spec.nodeName="$NODE",status.phase!=Succeeded,status.phase!=Failed --no-headers 2>/dev/null | wc -l | tr -d ' ')
+        local AVAIL_PODS=$((ALLOC_PODS - RUNNING_PODS))
+
+        local CAN_SCHEDULE="YES"
+        local REASONS=""
+
+        if [[ "$STATUS" != "True" ]]; then
+            CAN_SCHEDULE="NO"
+            REASONS="NotReady"
+        fi
+
+        if [[ $AVAIL_CPU_MC -lt $DS_CPU_MC ]]; then
+            CAN_SCHEDULE="NO"
+            REASONS="${REASONS:+$REASONS, }InsufficientCPU"
+        fi
+
+        if [[ $AVAIL_MEM_MI -lt $DS_MEM_MI ]]; then
+            CAN_SCHEDULE="NO"
+            REASONS="${REASONS:+$REASONS, }InsufficientMemory"
+        fi
+
+        if [[ $AVAIL_PODS -lt 1 ]]; then
+            CAN_SCHEDULE="NO"
+            REASONS="${REASONS:+$REASONS, }MaxPodsReached"
+        fi
+
+        if [[ -n "$TAINT_LIST" ]]; then
+            CAN_SCHEDULE="${CAN_SCHEDULE}*"
+            REASONS="${REASONS:+$REASONS, }HasTaints"
+        fi
+
+        local SCHEDULE_STATUS="$CAN_SCHEDULE${REASONS:+ ($REASONS)}"
+
+        echo ""
+        echo "Node: $NODE"
+        echo "  Ready:           $STATUS"
+        echo "  Taints:          ${TAINT_LIST:-<none>}"
+        echo "  Allocatable:     CPU=${ALLOC_CPU_MC}m  Mem=${ALLOC_MEM_MI}Mi  Pods=${ALLOC_PODS}"
+        echo "  Requested:       CPU=${USED_CPU_MC}m  Mem=${USED_MEM_MI}Mi  Pods=${RUNNING_PODS}  (pod specs, not actual usage)"
+        echo "  Available:       CPU=${AVAIL_CPU_MC}m  Mem=${AVAIL_MEM_MI}Mi  Pods=${AVAIL_PODS}  (scheduling headroom)"
+        echo "  Can Schedule:    $SCHEDULE_STATUS"
+
+        if [[ "$REASONS" == *"InsufficientCPU"* ]]; then
+            show_overprovisioned_pods "$NODE" "cpu"
+        elif [[ "$REASONS" == *"InsufficientMemory"* ]]; then
+            show_overprovisioned_pods "$NODE" "memory"
+        fi
+
+        local SHORT_NAME=$(echo "$NODE" | cut -c1-44)
+        printf "%-45s %8s %10s %8s %s\n" "$SHORT_NAME" "$AVAIL_CPU_MC" "$AVAIL_MEM_MI" "$AVAIL_PODS" "$SCHEDULE_STATUS" >> "$SUMMARY_FILE"
+    done
+
+    echo ""
+    echo "=============================================================================="
+    echo "SUMMARY TABLE"
+    echo "=============================================================================="
+    printf "%-45s %8s %10s %8s %s\n" "NODE" "CPU(m)" "MEM(Mi)" "PODS" "SCHEDULABLE"
+    printf "%-45s %8s %10s %8s %s\n" "----" "------" "-------" "----" "-----------"
+    grep " YES" "$SUMMARY_FILE" 2>/dev/null || true
+    grep " NO" "$SUMMARY_FILE" 2>/dev/null || true
+
+    echo ""
+    echo "* = Requires tolerations (see below)"
+    echo ""
+    echo "NOTE: CPU/MEM values are from pod resource REQUESTS, not actual usage."
+    echo "      Use 'kubectl top nodes' to see real-time usage metrics."
+    echo ""
+    echo "DaemonSet Requirements: CPU=${PREFLIGHT_CPU_REQUEST} (${DS_CPU_MC}m), Memory=${PREFLIGHT_MEMORY_REQUEST} (${DS_MEM_MI}Mi)"
+
+    if [[ -n "$ALL_TAINTS_LIST" ]]; then
+        echo ""
+        echo "=============================================================================="
+        echo "TAINTS FOUND"
+        echo "=============================================================================="
+        echo ""
+        echo "The following taints were found in the cluster:"
+        echo ""
+
+        for taint in $ALL_TAINTS_LIST; do
+            local KEY=$(echo "$taint" | cut -d: -f1)
+            local EFFECT=$(echo "$taint" | cut -d: -f2)
+            echo "  - $KEY ($EFFECT)"
+        done
+    fi
+}
+
+#
 # Main
 #
 
@@ -399,28 +911,44 @@ if [ "$OPERATION" = "install" ]; then
   validate_config
 fi
 
-case "$PLATFORM" in
-  docker)
-    case "$OPERATION" in
-      install)
-        docker_install
-        ;;
-      uninstall)
-        docker_uninstall
-        ;;
-    esac
-    ;;
-  k8s)
-    case "$OPERATION" in
-      install)
-        k8s_install
-        ;;
-      uninstall)
-        k8s_uninstall
-        ;;
-    esac
-    ;;
-esac
+# Handle status operation
+if [ "$OPERATION" = "status" ]; then
+  if [ "$PLATFORM" = "k8s" ]; then
+    k8s_status
+  else
+    docker_status
+  fi
+# Handle preflight operation (k8s only)
+elif [ "$OPERATION" = "preflight" ]; then
+  if [ "$PLATFORM" != "k8s" ]; then
+    echo "Error: preflight operation is only available for k8s platform"
+    exit 1
+  fi
+  preflight_check
+else
+  case "$PLATFORM" in
+    docker)
+      case "$OPERATION" in
+        install)
+          docker_install
+          ;;
+        uninstall)
+          docker_uninstall
+          ;;
+      esac
+      ;;
+    k8s)
+      case "$OPERATION" in
+        install)
+          k8s_install
+          ;;
+        uninstall)
+          k8s_uninstall
+          ;;
+      esac
+      ;;
+  esac
+fi
 
 echo ""
 echo "Completed: $(date -u '+%Y-%m-%d %H:%M:%S UTC') | $VERSION"
