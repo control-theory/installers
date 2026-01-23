@@ -3,7 +3,7 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.2.0"
+VERSION="v1.2.1"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -242,9 +242,14 @@ docker_install() {
   echo "Container Name: $CONTAINER_NAME"
   echo ""
 
+  # Capture hostname for container
+  HOST_NAME=$(hostname)
+
   # Build docker run command with optional CLUSTER_NAME
+  # setting K8S_NODE_NAME temp fix.
   DOCKER_CMD="docker run -d \
     --name $CONTAINER_NAME \
+    --hostname $HOST_NAME \
     --restart unless-stopped \
     --privileged \
     -v ./data:/data \
@@ -254,7 +259,9 @@ docker_install() {
     -e CONTROLPLANE_ENDPOINT=$CONFIG_ENDPOINT \
     -e ADMISSION_TOKEN=$DOCKER_ADMISSION_TOKEN \
     -e BUTLER_ENDPOINT=$DATA_ENDPOINT \
-    -e DEPLOYMENT_ENV=$DEPLOYMENT_ENV"
+    -e DEPLOYMENT_ENV=$DEPLOYMENT_ENV \
+    -e K8S_NODE_NAME=$HOST_NAME \
+    -e HOST_NAME=$HOST_NAME"
 
   # Default cluster name to "docker" for docker platform
   if [ -z "$CLUSTER_NAME" ]; then
