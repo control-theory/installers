@@ -3,7 +3,7 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.2.1"
+VERSION="v1.2.2"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -28,6 +28,7 @@ DOCKER_IMAGE_TAG="v1.3.10"
 OPERATION="install"
 PLATFORM="k8s"
 TYPE="both"
+HOST_PORT="false"
 KUBECONFIG_FILE="$HOME/.kube/config"
 NAMESPACE="${NAMESPACE:-controltheory}"
 ORG_ID=""
@@ -61,6 +62,7 @@ Options for k8s platform:
       --ds-token <token>               DaemonSet admission token (required for ds/both)
       --cluster-token <token>          Cluster admission token (required for cluster/both)
   -t, --type <ds|cluster|both>         Type to install (default: both)
+      --host-port                      Expose OTLP ports (1757/1758) on node for DaemonSet
       --kubeconfig <file>              Path to kubeconfig file (default: ~/.kube/config)
   -n, --namespace <namespace>          Kubernetes namespace (default: controltheory)
 
@@ -136,6 +138,10 @@ while [ $# -gt 0 ]; do
     -n|--namespace)
       NAMESPACE="$2"
       shift 2
+      ;;
+    --host-port)
+      HOST_PORT="true"
+      shift 1
       ;;
     -h|--help)
       usage
@@ -249,7 +255,7 @@ docker_install() {
   # setting K8S_NODE_NAME temp fix.
   DOCKER_CMD="docker run -d \
     --name $CONTAINER_NAME \
-    --hostname $HOST_NAME \
+    --hostname "aigent-docker" \
     --restart unless-stopped \
     --privileged \
     -v ./data:/data \
@@ -345,13 +351,22 @@ quick_preflight_check() {
 k8s_install_ds() {
   echo "Installing AIgent DaemonSet (node log collection)..."
   quick_preflight_check
-  $HELM upgrade --install --create-namespace "$RELEASE_NAME_DS" ct-helm/aigent-ds \
-    --namespace="$NAMESPACE" \
-    --set daemonset.controlplane.admission_token="$DS_ADMISSION_TOKEN" \
-    --set daemonset.controlplane.endpoint="$CONFIG_ENDPOINT" \
-    --set daemonset.butler_endpoint="$DATA_ENDPOINT" \
-    --set daemonset.cluster_name="$CLUSTER_NAME" \
+
+  local HELM_ARGS=(
+    --namespace="$NAMESPACE"
+    --set daemonset.controlplane.admission_token="$DS_ADMISSION_TOKEN"
+    --set daemonset.controlplane.endpoint="$CONFIG_ENDPOINT"
+    --set daemonset.butler_endpoint="$DATA_ENDPOINT"
+    --set daemonset.cluster_name="$CLUSTER_NAME"
     --set daemonset.deployment_env="$DEPLOYMENT_ENV"
+  )
+
+  if [ "$HOST_PORT" = "true" ]; then
+    HELM_ARGS+=(--set hostPort.enabled=true)
+    echo "  Host Port: enabled (1757/1758)"
+  fi
+
+  $HELM upgrade --install --create-namespace "$RELEASE_NAME_DS" ct-helm/aigent-ds "${HELM_ARGS[@]}"
 }
 
 k8s_install_cluster() {
@@ -381,6 +396,9 @@ k8s_install() {
   echo "Deployment Environment: $DEPLOYMENT_ENV"
   echo "Namespace: $NAMESPACE"
   echo "Type: $TYPE"
+  if [ "$HOST_PORT" = "true" ]; then
+    echo "Host Port: enabled (1757/1758)"
+  fi
   if [ -n "$KUBECONFIG_FILE" ]; then
     echo "Kubeconfig: $KUBECONFIG_FILE"
   fi
