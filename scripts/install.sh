@@ -3,7 +3,7 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.2.2"
+VERSION="v1.2.3"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -276,8 +276,8 @@ docker_install() {
   DOCKER_CMD="$DOCKER_CMD -e CLUSTER_NAME=$CLUSTER_NAME"
 
   DOCKER_CMD="$DOCKER_CMD \
-    -p 4317:4317 \
-    -p 4318:4318 \
+    -p 4317:1757 \
+    -p 4318:1758 \
     ${DOCKER_IMAGE}:${DOCKER_IMAGE_TAG}"
 
   eval "$DOCKER_CMD"
