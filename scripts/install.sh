@@ -3,7 +3,7 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.2.4"
+VERSION="v1.2.5"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -149,10 +149,6 @@ while [ $# -gt 0 ]; do
     -v|--version)
       echo "$VERSION"
       exit 0
-      ;;
-    *)
-      echo "Unknown option: $1"
-      usage
       ;;
   esac
 done
