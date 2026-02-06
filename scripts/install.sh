@@ -3,7 +3,7 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.2.4"
+VERSION="v1.2.5"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -28,7 +28,7 @@ DOCKER_IMAGE_TAG="v1.3.11"
 OPERATION="install"
 PLATFORM="k8s"
 TYPE="both"
-HOST_PORT="false"
+HOST_PORT="true"
 KUBECONFIG_FILE="$HOME/.kube/config"
 NAMESPACE="${NAMESPACE:-controltheory}"
 ORG_ID=""
@@ -62,7 +62,7 @@ Options for k8s platform:
       --ds-token <token>               DaemonSet admission token (required for ds/both)
       --cluster-token <token>          Cluster admission token (required for cluster/both)
   -t, --type <ds|cluster|both>         Type to install (default: both)
-      --host-port                      Expose OTLP ports (1757/1758) on node for DaemonSet
+      --no-host-port                   DO NOT Expose OTLP ports (1757/1758) on node for DaemonSet
       --kubeconfig <file>              Path to kubeconfig file (default: ~/.kube/config)
   -n, --namespace <namespace>          Kubernetes namespace (default: controltheory)
 
@@ -139,8 +139,8 @@ while [ $# -gt 0 ]; do
       NAMESPACE="$2"
       shift 2
       ;;
-    --host-port)
-      HOST_PORT="true"
+    --no-host-port)
+      HOST_PORT="false"
       shift 1
       ;;
     -h|--help)
