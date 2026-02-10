@@ -150,10 +150,6 @@ while [ $# -gt 0 ]; do
       echo "$VERSION"
       exit 0
       ;;
-    *)
-      echo "Unknown option: $1"
-      usage
-      ;;
   esac
 done
 
