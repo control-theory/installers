@@ -3,7 +3,7 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.2.5"
+VERSION="v1.2.6"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -21,6 +21,7 @@ CLUSTER_ADMISSION_TOKEN=""
 DOCKER_ADMISSION_TOKEN=""
 CONFIG_ENDPOINT=""
 DATA_ENDPOINT=""
+ORG_API_ENDPOINT=""
 DOCKER_IMAGE="controltheory/supervisor"
 DOCKER_IMAGE_TAG="v1.3.11"
 
@@ -51,6 +52,7 @@ Options:
   -i, --org-id <id>                    Organization identifier (required for install)
       --config-endpoint <url>          Config endpoint URL (required for install)
       --data-endpoint <host:port>      Data endpoint address (required for install)
+      --org-api-endpoint <url>         Org API endpoint URL (optional)
       --cluster-name <name>            Cluster/host name (required for k8s, optional for docker - defaults to 'docker')
   -e, --env <environment>              Deployment environment (required for install)
 
@@ -117,6 +119,10 @@ while [ $# -gt 0 ]; do
       ;;
     --data-endpoint)
       DATA_ENDPOINT="$2"
+      shift 2
+      ;;
+    --org-api-endpoint)
+      ORG_API_ENDPOINT="$2"
       shift 2
       ;;
     -i|--org-id)
@@ -236,6 +242,7 @@ RELEASE_NAME_DS="aigent-ds"
 RELEASE_NAME_CLUSTER="aigent-cluster"
 CONTAINER_NAME="aigent"
 
+
 #
 # Docker functions
 #
@@ -264,6 +271,11 @@ docker_install() {
     -e DEPLOYMENT_ENV=$DEPLOYMENT_ENV \
     -e K8S_NODE_NAME=$HOST_NAME \
     -e HOST_NAME=$HOST_NAME"
+
+  # Add org API settings if provided
+  if [ -n "$ORG_API_ENDPOINT" ]; then
+    DOCKER_CMD="$DOCKER_CMD -e CT_ORG_API_ENDPOINT=$ORG_API_ENDPOINT"
+  fi
 
   # Default cluster name to "docker" for docker platform
   if [ -z "$CLUSTER_NAME" ]; then
@@ -357,6 +369,11 @@ k8s_install_ds() {
     --set daemonset.deployment_env="$DEPLOYMENT_ENV"
   )
 
+  # Add org API settings if provided
+  if [ -n "$ORG_API_ENDPOINT" ]; then
+    HELM_ARGS+=(--set daemonset.org_api_endpoint="$ORG_API_ENDPOINT")
+  fi
+
   if [ "$HOST_PORT" = "true" ]; then
     HELM_ARGS+=(--set hostPort.enabled=true)
     echo "  Host Port: enabled (1757/1758)"
@@ -367,13 +384,22 @@ k8s_install_ds() {
 
 k8s_install_cluster() {
   echo "Installing AIgent Cluster Agent (k8s events)..."
-  $HELM upgrade --install --create-namespace "$RELEASE_NAME_CLUSTER" ct-helm/aigent-cluster \
-    --namespace="$NAMESPACE" \
-    --set deployment.controlplane.admission_token="$CLUSTER_ADMISSION_TOKEN" \
-    --set deployment.controlplane.endpoint="$CONFIG_ENDPOINT" \
-    --set deployment.butler_endpoint="$DATA_ENDPOINT" \
-    --set deployment.cluster_name="$CLUSTER_NAME" \
+
+  local HELM_ARGS=(
+    --namespace="$NAMESPACE"
+    --set deployment.controlplane.admission_token="$CLUSTER_ADMISSION_TOKEN"
+    --set deployment.controlplane.endpoint="$CONFIG_ENDPOINT"
+    --set deployment.butler_endpoint="$DATA_ENDPOINT"
+    --set deployment.cluster_name="$CLUSTER_NAME"
     --set deployment.deployment_env="$DEPLOYMENT_ENV"
+  )
+
+  # Add org API settings if provided
+  if [ -n "$ORG_API_ENDPOINT" ]; then
+    HELM_ARGS+=(--set deployment.org_api_endpoint="$ORG_API_ENDPOINT")
+  fi
+
+  $HELM upgrade --install --create-namespace "$RELEASE_NAME_CLUSTER" ct-helm/aigent-cluster "${HELM_ARGS[@]}"
 }
 
 k8s_uninstall_ds() {
