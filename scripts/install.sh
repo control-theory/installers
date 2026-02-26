@@ -3,7 +3,7 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.2.6"
+VERSION="v1.3.0"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -35,6 +35,12 @@ NAMESPACE="${NAMESPACE:-controltheory}"
 ORG_ID=""
 CLUSTER_NAME=""
 DEPLOYMENT_ENV=""
+HELM_VERSION=""
+HELM_DEVEL="false"
+
+# Chart references (can be overridden via CT_CHARTS_PATH env var for local dev)
+AIGENT_DS_CHART=""
+AIGENT_CLUSTER_CHART=""
 
 usage() {
   cat <<EOF
@@ -67,6 +73,7 @@ Options for k8s platform:
       --no-host-port                   DO NOT Expose OTLP ports (1757/1758) on node for DaemonSet
       --kubeconfig <file>              Path to kubeconfig file (default: ~/.kube/config)
   -n, --namespace <namespace>          Kubernetes namespace (default: controltheory)
+      --helm-version <version>         Helm chart version (default: latest stable)
 
 Examples:
   $0 -i okz30akqj --ds-token <t1> --cluster-token <t2> --config-endpoint <url> --data-endpoint <h:p> --cluster-name mycluster -e prod
@@ -147,6 +154,14 @@ while [ $# -gt 0 ]; do
       ;;
     --no-host-port)
       HOST_PORT="false"
+      shift 1
+      ;;
+    --helm-version)
+      HELM_VERSION="$2"
+      shift 2
+      ;;
+    --devel)
+      HELM_DEVEL="true"
       shift 1
       ;;
     -h|--help)
@@ -379,7 +394,14 @@ k8s_install_ds() {
     echo "  Host Port: enabled (1757/1758)"
   fi
 
-  $HELM upgrade --install --create-namespace "$RELEASE_NAME_DS" ct-helm/aigent-ds "${HELM_ARGS[@]}"
+  if [ -n "$HELM_VERSION" ]; then
+    HELM_ARGS+=(--version "$HELM_VERSION")
+  fi
+  if [ "$HELM_DEVEL" = "true" ]; then
+    HELM_ARGS+=(--devel)
+  fi
+
+  $HELM upgrade --install --create-namespace "$RELEASE_NAME_DS" "$AIGENT_DS_CHART" "${HELM_ARGS[@]}"
 }
 
 k8s_install_cluster() {
@@ -399,7 +421,14 @@ k8s_install_cluster() {
     HELM_ARGS+=(--set deployment.org_api_endpoint="$ORG_API_ENDPOINT")
   fi
 
-  $HELM upgrade --install --create-namespace "$RELEASE_NAME_CLUSTER" ct-helm/aigent-cluster "${HELM_ARGS[@]}"
+  if [ -n "$HELM_VERSION" ]; then
+    HELM_ARGS+=(--version "$HELM_VERSION")
+  fi
+  if [ "$HELM_DEVEL" = "true" ]; then
+    HELM_ARGS+=(--devel)
+  fi
+
+  $HELM upgrade --install --create-namespace "$RELEASE_NAME_CLUSTER" "$AIGENT_CLUSTER_CHART" "${HELM_ARGS[@]}"
 }
 
 k8s_uninstall_ds() {
@@ -424,12 +453,28 @@ k8s_install() {
   if [ -n "$KUBECONFIG_FILE" ]; then
     echo "Kubeconfig: $KUBECONFIG_FILE"
   fi
-  echo ""
+  if [ -n "$HELM_VERSION" ]; then
+    echo "Helm Chart Version: $HELM_VERSION"
+  fi
 
-  # Add helm repo
-  echo "Adding ct-helm repository..."
-  $HELM repo add ct-helm https://control-theory.github.io/helm-charts 2>/dev/null || true
-  $HELM repo update ct-helm
+  # Set up chart references
+  if [ -n "$CT_CHARTS_PATH" ]; then
+    # -- use local charts if you have them handy
+    echo "Charts: $CT_CHARTS_PATH (local)..."
+    AIGENT_DS_CHART="$CT_CHARTS_PATH/aigent-ds"
+    AIGENT_CLUSTER_CHART="$CT_CHARTS_PATH/aigent-cluster"
+    if [ ! -d "$AIGENT_DS_CHART" ] || [ ! -d "$AIGENT_CLUSTER_CHART" ]; then
+      echo "Error: CT_CHARTS_PATH is set but charts not found at $CT_CHARTS_PATH"
+      exit 1
+    fi
+  else
+    # Published repo
+    echo "Charts: Adding ct-helm repository..."
+    $HELM repo add ct-helm https://control-theory.github.io/helm-charts 2>/dev/null || true
+    $HELM repo update ct-helm
+    AIGENT_DS_CHART="ct-helm/aigent-ds"
+    AIGENT_CLUSTER_CHART="ct-helm/aigent-cluster"
+  fi
   echo ""
 
   case "$TYPE" in
