@@ -23,7 +23,7 @@ CONFIG_ENDPOINT=""
 DATA_ENDPOINT=""
 ORG_API_ENDPOINT=""
 DOCKER_IMAGE="controltheory/supervisor"
-DOCKER_IMAGE_TAG="v1.3.16"
+DOCKER_IMAGE_TAG="v1.3.16.1"
 
 # Defaults
 OPERATION="install"
