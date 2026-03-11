@@ -3,7 +3,7 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.3.0"
+VERSION="v1.3.1"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -22,8 +22,8 @@ DOCKER_ADMISSION_TOKEN=""
 CONFIG_ENDPOINT=""
 DATA_ENDPOINT=""
 ORG_API_ENDPOINT=""
-DOCKER_IMAGE="controltheory/supervisor"
-DOCKER_IMAGE_TAG="v1.3.16.1"
+DOCKER_IMAGE="controltheory/aigent"
+DOCKER_IMAGE_TAG="v1.3.18"
 
 # Defaults
 OPERATION="install"
@@ -56,7 +56,6 @@ General options:
 
 Options:
   -i, --org-id <id>                    Organization identifier (required for install)
-      --config-endpoint <url>          Config endpoint URL (required for install)
       --data-endpoint <host:port>      Data endpoint address (required for install)
       --org-api-endpoint <url>         Org API endpoint URL (optional)
       --cluster-name <name>            Cluster/host name (required for k8s, optional for docker - defaults to 'docker')
@@ -76,7 +75,7 @@ Options for k8s platform:
       --helm-version <version>         Helm chart version (default: latest stable)
 
 Examples:
-  $0 -i okz30akqj --ds-token <t1> --cluster-token <t2> --config-endpoint <url> --data-endpoint <h:p> --cluster-name mycluster -e prod
+  $0 -i okz30akqj --ds-token <t1> --cluster-token <t2> --data-endpoint <h:p> --cluster-name mycluster -e prod
   $0 -i okz30akqj -t ds --ds-token <t> --config-endpoint <url> --data-endpoint <h:p> --cluster-name mycluster -e dev
   $0 -i okz30akqj -p docker --docker-token <t> --config-endpoint <url> --data-endpoint <h:p> --cluster-name myhost -e prod
   $0 -o uninstall
@@ -118,10 +117,6 @@ while [ $# -gt 0 ]; do
       ;;
     --cluster-token)
       CLUSTER_ADMISSION_TOKEN="$2"
-      shift 2
-      ;;
-    --config-endpoint)
-      CONFIG_ENDPOINT="$2"
       shift 2
       ;;
     --data-endpoint)
@@ -198,10 +193,6 @@ validate_config() {
   # Validate common required options
   if [ -z "$ORG_ID" ]; then
     echo "Error: -i/--org-id is required for install"
-    usage
-  fi
-  if [ -z "$CONFIG_ENDPOINT" ]; then
-    echo "Error: --config-endpoint is required for install"
     usage
   fi
   if [ -z "$DATA_ENDPOINT" ]; then
