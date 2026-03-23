@@ -20,6 +20,7 @@ DS_ADMISSION_TOKEN=""
 CLUSTER_ADMISSION_TOKEN=""
 DOCKER_ADMISSION_TOKEN=""
 ORG_API_ENDPOINT=""
+DATA_ENDPOINT=""
 DOCKER_IMAGE="controltheory/aigent"
 DOCKER_IMAGE_TAG="v1.3.20"
 
@@ -70,6 +71,7 @@ Options for k8s platform:
       --kubeconfig <file>              Path to kubeconfig file (default: ~/.kube/config)
   -n, --namespace <namespace>          Kubernetes namespace (default: controltheory)
       --helm-version <version>         Helm chart version (default: latest stable)
+      --data-endpoint <endpoint>       Data endpoint for local dev (e.g., butler.org.local:7761)
 
 Examples:
   $0 -i okz30akqj --ds-token <t1> --cluster-token <t2> --org-api-endpoint <url> --cluster-name mycluster -e prod
@@ -130,6 +132,10 @@ while [ $# -gt 0 ]; do
       ;;
     --cluster-name)
       CLUSTER_NAME="$2"
+      shift 2
+      ;;
+    --data-endpoint)
+      DATA_ENDPOINT="$2"
       shift 2
       ;;
     --kubeconfig)
@@ -361,6 +367,10 @@ k8s_install_ds() {
     --set daemonset.deployment_env="$DEPLOYMENT_ENV"
   )
 
+  if [ -n "$DATA_ENDPOINT" ]; then
+    HELM_ARGS+=(--set "daemonset.env.DATA_ENDPOINT=$DATA_ENDPOINT")
+  fi
+
   if [ "$HOST_PORT" = "true" ]; then
     HELM_ARGS+=(--set hostPort.enabled=true)
     echo "  Host Port: enabled (1757/1758)"
@@ -386,6 +396,10 @@ k8s_install_cluster() {
     --set deployment.cluster_name="$CLUSTER_NAME"
     --set deployment.deployment_env="$DEPLOYMENT_ENV"
   )
+
+  if [ -n "$DATA_ENDPOINT" ]; then
+    HELM_ARGS+=(--set "deployment.env.DATA_ENDPOINT=$DATA_ENDPOINT")
+  fi
 
   if [ -n "$HELM_VERSION" ]; then
     HELM_ARGS+=(--version "$HELM_VERSION")
