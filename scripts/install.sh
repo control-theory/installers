@@ -3,13 +3,13 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.3.0"
+VERSION="v1.4.0"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
-#   ./install.sh -i <org-id> --ds-token <t1> --cluster-token <t2> --config-endpoint <url> --data-endpoint <h:p> --cluster-name <name> -e <env>
-#   ./install.sh -i <org-id> -t ds --ds-token <t> --config-endpoint <url> --data-endpoint <h:p> --cluster-name <name> -e <env>
-#   ./install.sh -i <org-id> -p docker --docker-token <t> --config-endpoint <url> --data-endpoint <h:p> --cluster-name <name> -e <env>
+#   ./install.sh -i <org-id> --ds-token <t1> --cluster-token <t2> --org-api-endpoint <url> --cluster-name <name> -e <env>
+#   ./install.sh -i <org-id> -t ds --ds-token <t> --org-api-endpoint <url> --cluster-name <name> -e <env>
+#   ./install.sh -i <org-id> -p docker --docker-token <t> --org-api-endpoint <url> --cluster-name <name> -e <env>
 #   ./install.sh -o uninstall
 #   ./install.sh -o uninstall -p docker
 #   ./install.sh -o status
@@ -19,11 +19,11 @@ VERSION="v1.3.0"
 DS_ADMISSION_TOKEN=""
 CLUSTER_ADMISSION_TOKEN=""
 DOCKER_ADMISSION_TOKEN=""
-CONFIG_ENDPOINT=""
-DATA_ENDPOINT=""
 ORG_API_ENDPOINT=""
-DOCKER_IMAGE="controltheory/supervisor"
-DOCKER_IMAGE_TAG="v1.3.16.1"
+DATA_ENDPOINT=""
+DATA_TLS=""
+DOCKER_IMAGE="controltheory/aigent"
+DOCKER_IMAGE_TAG="v1.3.24"
 
 # Defaults
 OPERATION="install"
@@ -57,9 +57,7 @@ General options:
 
 Options:
   -i, --org-id <id>                    Organization identifier (required for install)
-      --config-endpoint <url>          Config endpoint URL (required for install)
-      --data-endpoint <host:port>      Data endpoint address (required for install)
-      --org-api-endpoint <url>         Org API endpoint URL (optional)
+      --org-api-endpoint <url>         Org API endpoint URL (required for install)
       --cluster-name <name>            Cluster/host name (required for k8s, optional for docker - defaults to 'docker')
   -e, --env <environment>              Deployment environment (required for install)
       --source-id <id>                 Source ID to bind the agent to (required for install)
@@ -76,11 +74,12 @@ Options for k8s platform:
       --kubeconfig <file>              Path to kubeconfig file (default: ~/.kube/config)
   -n, --namespace <namespace>          Kubernetes namespace (default: controltheory)
       --helm-version <version>         Helm chart version (default: latest stable)
+      --data-endpoint <endpoint>       Data endpoint for local dev (e.g., butler.org.local:7761)
 
 Examples:
-  $0 -i okz30akqj --ds-token <t1> --cluster-token <t2> --config-endpoint <url> --data-endpoint <h:p> --cluster-name mycluster -e prod
-  $0 -i okz30akqj -t ds --ds-token <t> --config-endpoint <url> --data-endpoint <h:p> --cluster-name mycluster -e dev
-  $0 -i okz30akqj -p docker --docker-token <t> --config-endpoint <url> --data-endpoint <h:p> --cluster-name myhost -e prod
+  $0 -i okz30akqj --ds-token <t1> --cluster-token <t2> --org-api-endpoint <url> --cluster-name mycluster -e prod
+  $0 -i okz30akqj -t ds --ds-token <t> --org-api-endpoint <url> --cluster-name mycluster -e dev
+  $0 -i okz30akqj -p docker --docker-token <t> --org-api-endpoint <url> --cluster-name myhost -e prod
   $0 -o uninstall
   $0 -o uninstall -p docker
   $0 -o status
@@ -122,14 +121,6 @@ while [ $# -gt 0 ]; do
       CLUSTER_ADMISSION_TOKEN="$2"
       shift 2
       ;;
-    --config-endpoint)
-      CONFIG_ENDPOINT="$2"
-      shift 2
-      ;;
-    --data-endpoint)
-      DATA_ENDPOINT="$2"
-      shift 2
-      ;;
     --org-api-endpoint)
       ORG_API_ENDPOINT="$2"
       shift 2
@@ -148,6 +139,14 @@ while [ $# -gt 0 ]; do
       ;;
     --source-id)
       SOURCE_ID="$2"
+      shift 2
+      ;;
+    --data-endpoint)
+      DATA_ENDPOINT="$2"
+      shift 2
+      ;;
+    --data-tls)
+      DATA_TLS="$2"
       shift 2
       ;;
     --kubeconfig)
@@ -206,12 +205,8 @@ validate_config() {
     echo "Error: -i/--org-id is required for install"
     usage
   fi
-  if [ -z "$CONFIG_ENDPOINT" ]; then
-    echo "Error: --config-endpoint is required for install"
-    usage
-  fi
-  if [ -z "$DATA_ENDPOINT" ]; then
-    echo "Error: --data-endpoint is required for install"
+  if [ -z "$ORG_API_ENDPOINT" ]; then
+    echo "Error: --org-api-endpoint is required for install"
     usage
   fi
   # cluster_name is required for k8s, optional for docker
@@ -286,17 +281,11 @@ docker_install() {
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v /var/lib/docker/containers:/var/lib/docker/containers:ro \
     -v /var/log:/var/log \
-    -e CONTROLPLANE_ENDPOINT=$CONFIG_ENDPOINT \
     -e ADMISSION_TOKEN=$DOCKER_ADMISSION_TOKEN \
-    -e BUTLER_ENDPOINT=$DATA_ENDPOINT \
+    -e CT_ORG_API_ENDPOINT=$ORG_API_ENDPOINT \
     -e DEPLOYMENT_ENV=$DEPLOYMENT_ENV \
     -e K8S_NODE_NAME=$HOST_NAME \
     -e HOST_NAME=$HOST_NAME"
-
-  # Add org API settings if provided
-  if [ -n "$ORG_API_ENDPOINT" ]; then
-    DOCKER_CMD="$DOCKER_CMD -e CT_ORG_API_ENDPOINT=$ORG_API_ENDPOINT"
-  fi
 
   # Default cluster name to "docker" for docker platform
   if [ -z "$CLUSTER_NAME" ]; then
@@ -389,15 +378,16 @@ k8s_install_ds() {
   local HELM_ARGS=(
     --namespace="$NAMESPACE"
     --set daemonset.controlplane.admission_token="$DS_ADMISSION_TOKEN"
-    --set daemonset.controlplane.endpoint="$CONFIG_ENDPOINT"
-    --set daemonset.butler_endpoint="$DATA_ENDPOINT"
+    --set daemonset.org_api_endpoint="$ORG_API_ENDPOINT"
     --set daemonset.cluster_name="$CLUSTER_NAME"
     --set daemonset.deployment_env="$DEPLOYMENT_ENV"
   )
 
-  # Add org API settings if provided
-  if [ -n "$ORG_API_ENDPOINT" ]; then
-    HELM_ARGS+=(--set daemonset.org_api_endpoint="$ORG_API_ENDPOINT")
+  if [ -n "$DATA_ENDPOINT" ]; then
+    HELM_ARGS+=(--set "daemonset.data_endpoint=$DATA_ENDPOINT")
+  fi
+  if [ -n "$DATA_TLS" ]; then
+    HELM_ARGS+=(--set "daemonset.data_tls=$DATA_TLS")
   fi
 
   # Pass source ID when provided (source-backed install)
@@ -426,15 +416,16 @@ k8s_install_cluster() {
   local HELM_ARGS=(
     --namespace="$NAMESPACE"
     --set deployment.controlplane.admission_token="$CLUSTER_ADMISSION_TOKEN"
-    --set deployment.controlplane.endpoint="$CONFIG_ENDPOINT"
-    --set deployment.butler_endpoint="$DATA_ENDPOINT"
+    --set deployment.org_api_endpoint="$ORG_API_ENDPOINT"
     --set deployment.cluster_name="$CLUSTER_NAME"
     --set deployment.deployment_env="$DEPLOYMENT_ENV"
   )
 
-  # Add org API settings if provided
-  if [ -n "$ORG_API_ENDPOINT" ]; then
-    HELM_ARGS+=(--set deployment.org_api_endpoint="$ORG_API_ENDPOINT")
+  if [ -n "$DATA_ENDPOINT" ]; then
+    HELM_ARGS+=(--set "deployment.data_endpoint=$DATA_ENDPOINT")
+  fi
+  if [ -n "$DATA_TLS" ]; then
+    HELM_ARGS+=(--set "deployment.data_tls=$DATA_TLS")
   fi
 
   # Pass source ID when provided (source-backed install)
