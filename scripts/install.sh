@@ -35,6 +35,7 @@ NAMESPACE="${NAMESPACE:-controltheory}"
 ORG_ID=""
 CLUSTER_NAME=""
 DEPLOYMENT_ENV=""
+SOURCE_ID=""
 HELM_VERSION=""
 HELM_DEVEL="false"
 
@@ -61,6 +62,7 @@ Options:
       --org-api-endpoint <url>         Org API endpoint URL (optional)
       --cluster-name <name>            Cluster/host name (required for k8s, optional for docker - defaults to 'docker')
   -e, --env <environment>              Deployment environment (required for install)
+      --source-id <id>                 Source ID to bind the agent to (required for install)
 
 Options for docker platform:
       --docker-token <token>           Docker admission token (required for install)
@@ -142,6 +144,10 @@ while [ $# -gt 0 ]; do
       ;;
     --cluster-name)
       CLUSTER_NAME="$2"
+      shift 2
+      ;;
+    --source-id)
+      SOURCE_ID="$2"
       shift 2
       ;;
     --kubeconfig)
@@ -298,6 +304,11 @@ docker_install() {
   fi
   DOCKER_CMD="$DOCKER_CMD -e CLUSTER_NAME=$CLUSTER_NAME"
 
+  # Pass source ID when provided (source-backed install)
+  if [ -n "$SOURCE_ID" ]; then
+    DOCKER_CMD="$DOCKER_CMD -e SOURCE_ID=$SOURCE_ID"
+  fi
+
   DOCKER_CMD="$DOCKER_CMD \
     -p 4317:1757 \
     -p 4318:1758 \
@@ -389,6 +400,11 @@ k8s_install_ds() {
     HELM_ARGS+=(--set daemonset.org_api_endpoint="$ORG_API_ENDPOINT")
   fi
 
+  # Pass source ID when provided (source-backed install)
+  if [ -n "$SOURCE_ID" ]; then
+    HELM_ARGS+=(--set daemonset.source_id="$SOURCE_ID")
+  fi
+
   if [ "$HOST_PORT" = "true" ]; then
     HELM_ARGS+=(--set hostPort.enabled=true)
     echo "  Host Port: enabled (1757/1758)"
@@ -419,6 +435,11 @@ k8s_install_cluster() {
   # Add org API settings if provided
   if [ -n "$ORG_API_ENDPOINT" ]; then
     HELM_ARGS+=(--set deployment.org_api_endpoint="$ORG_API_ENDPOINT")
+  fi
+
+  # Pass source ID when provided (source-backed install)
+  if [ -n "$SOURCE_ID" ]; then
+    HELM_ARGS+=(--set deployment.source_id="$SOURCE_ID")
   fi
 
   if [ -n "$HELM_VERSION" ]; then
