@@ -21,8 +21,9 @@ CLUSTER_ADMISSION_TOKEN=""
 DOCKER_ADMISSION_TOKEN=""
 ORG_API_ENDPOINT=""
 DATA_ENDPOINT=""
+DATA_TLS=""
 DOCKER_IMAGE="controltheory/aigent"
-DOCKER_IMAGE_TAG="v1.3.20"
+DOCKER_IMAGE_TAG="v1.3.24"
 
 # Defaults
 OPERATION="install"
@@ -136,6 +137,10 @@ while [ $# -gt 0 ]; do
       ;;
     --data-endpoint)
       DATA_ENDPOINT="$2"
+      shift 2
+      ;;
+    --data-tls)
+      DATA_TLS="$2"
       shift 2
       ;;
     --kubeconfig)
@@ -368,7 +373,10 @@ k8s_install_ds() {
   )
 
   if [ -n "$DATA_ENDPOINT" ]; then
-    HELM_ARGS+=(--set "daemonset.env.DATA_ENDPOINT=$DATA_ENDPOINT")
+    HELM_ARGS+=(--set "daemonset.data_endpoint=$DATA_ENDPOINT")
+  fi
+  if [ -n "$DATA_TLS" ]; then
+    HELM_ARGS+=(--set "daemonset.data_tls=$DATA_TLS")
   fi
 
   if [ "$HOST_PORT" = "true" ]; then
@@ -398,7 +406,10 @@ k8s_install_cluster() {
   )
 
   if [ -n "$DATA_ENDPOINT" ]; then
-    HELM_ARGS+=(--set "deployment.env.DATA_ENDPOINT=$DATA_ENDPOINT")
+    HELM_ARGS+=(--set "deployment.data_endpoint=$DATA_ENDPOINT")
+  fi
+  if [ -n "$DATA_TLS" ]; then
+    HELM_ARGS+=(--set "deployment.data_tls=$DATA_TLS")
   fi
 
   if [ -n "$HELM_VERSION" ]; then
