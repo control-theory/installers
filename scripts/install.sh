@@ -283,6 +283,7 @@ docker_install() {
     -v /var/log:/var/log \
     -e ADMISSION_TOKEN=$DOCKER_ADMISSION_TOKEN \
     -e CT_ORG_API_ENDPOINT=$ORG_API_ENDPOINT \
+    -e CT_ORG_DNS_ID=$ORG_ID \
     -e DEPLOYMENT_ENV=$DEPLOYMENT_ENV \
     -e K8S_NODE_NAME=$HOST_NAME \
     -e HOST_NAME=$HOST_NAME"
@@ -381,6 +382,7 @@ k8s_install_ds() {
     --set daemonset.org_api_endpoint="$ORG_API_ENDPOINT"
     --set daemonset.cluster_name="$CLUSTER_NAME"
     --set daemonset.deployment_env="$DEPLOYMENT_ENV"
+    --set daemonset.org_dns_id="$ORG_ID"
   )
 
   if [ -n "$DATA_ENDPOINT" ]; then
@@ -419,6 +421,7 @@ k8s_install_cluster() {
     --set deployment.org_api_endpoint="$ORG_API_ENDPOINT"
     --set deployment.cluster_name="$CLUSTER_NAME"
     --set deployment.deployment_env="$DEPLOYMENT_ENV"
+    --set deployment.org_dns_id="$ORG_ID"
   )
 
   if [ -n "$DATA_ENDPOINT" ]; then
