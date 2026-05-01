@@ -23,7 +23,7 @@ ORG_API_ENDPOINT=""
 DATA_ENDPOINT=""
 DATA_TLS=""
 DOCKER_IMAGE="controltheory/aigent"
-DOCKER_IMAGE_TAG="v1.3.28"
+DOCKER_IMAGE_TAG="v1.3.29"
 
 # Defaults
 OPERATION="install"
