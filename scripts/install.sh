@@ -3,7 +3,7 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.4.3"
+VERSION="v1.4.4"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -53,6 +53,35 @@ run_cmd() {
     "$@"
   else
     "$@" > /dev/null
+  fi
+}
+
+# Output formatting
+HR_HEAVY="════════════════════════════════════════════════════════"
+HR_LIGHT="────────────────────────────────────────────────────────"
+
+# Run an install step: capture all output to a log and print a single
+# "✓ name detail" status line on success. On failure print "✗ name failed:"
+# and dump the captured log indented, then exit. Debug mode streams the
+# underlying command output instead of capturing it.
+run_step() {
+  local name="$1" detail="$2"
+  shift 2
+  if [ "$DEBUG" = "true" ]; then
+    "$@"
+    printf '  ✓ %-17s%s\n' "$name" "$detail"
+    return
+  fi
+  local log
+  log=$(mktemp)
+  if "$@" > "$log" 2>&1; then
+    printf '  ✓ %-17s%s\n' "$name" "$detail"
+    rm -f "$log"
+  else
+    printf '  ✗ %s failed:\n' "$name"
+    sed 's/^/      /' "$log"
+    rm -f "$log"
+    exit 1
   fi
 }
 
@@ -393,14 +422,11 @@ quick_preflight_check() {
   done
 
   if [[ $problem_nodes -gt 0 ]]; then
-    echo ""
-    echo "WARNING: $problem_nodes of $total_nodes nodes have insufficient resources (use -o preflight for details)"
-    echo ""
+    echo "  WARNING: $problem_nodes of $total_nodes nodes have insufficient resources (use -o preflight for details)"
   fi
 }
 
 k8s_install_ds() {
-  debug "Installing AIgent DaemonSet (node log collection)..."
   quick_preflight_check
 
   local HELM_ARGS=(
@@ -428,7 +454,6 @@ k8s_install_ds() {
 
   if [ "$HOST_PORT" = "true" ]; then
     HELM_ARGS+=(--set hostPort.enabled=true)
-    debug "  Host Port: enabled (1757/1758)"
   fi
 
   if [ -n "$HELM_VERSION" ]; then
@@ -438,12 +463,11 @@ k8s_install_ds() {
     HELM_ARGS+=(--devel)
   fi
 
-  run_cmd $HELM upgrade --install --create-namespace "$RELEASE_NAME_DS" "$AIGENT_DS_CHART" "${HELM_ARGS[@]}"
+  run_step "AIgent DaemonSet" "$(printf '%-16s— node log collection' "$RELEASE_NAME_DS")" \
+    $HELM upgrade --install --create-namespace "$RELEASE_NAME_DS" "$AIGENT_DS_CHART" "${HELM_ARGS[@]}"
 }
 
 k8s_install_cluster() {
-  debug "Installing AIgent Cluster Agent (k8s events)..."
-
   local HELM_ARGS=(
     --namespace="$NAMESPACE"
     --set deployment.controlplane.admission_token="$CLUSTER_ADMISSION_TOKEN"
@@ -474,7 +498,8 @@ k8s_install_cluster() {
     HELM_ARGS+=(--devel)
   fi
 
-  run_cmd $HELM upgrade --install --create-namespace "$RELEASE_NAME_CLUSTER" "$AIGENT_CLUSTER_CHART" "${HELM_ARGS[@]}"
+  run_step "Cluster Agent" "$(printf '%-16s— k8s events' "$RELEASE_NAME_CLUSTER")" \
+    $HELM upgrade --install --create-namespace "$RELEASE_NAME_CLUSTER" "$AIGENT_CLUSTER_CHART" "${HELM_ARGS[@]}"
 }
 
 k8s_uninstall_ds() {
@@ -487,41 +512,58 @@ k8s_uninstall_cluster() {
   run_cmd $HELM uninstall "$RELEASE_NAME_CLUSTER" --namespace="$NAMESPACE" 2>/dev/null || echo "Cluster Agent release not found"
 }
 
+# Helm repo setup as a single step so run_step can capture its output
+helm_repo_setup() {
+  $HELM repo add ct-helm https://control-theory.github.io/helm-charts 2>/dev/null || true
+  $HELM repo update ct-helm
+}
+
 k8s_install() {
-  echo "ControlTheory Agent install started (k8s)"
-  debug "Cluster Name: $CLUSTER_NAME"
-  debug "Deployment Environment: $DEPLOYMENT_ENV"
-  debug "Namespace: $NAMESPACE"
-  debug "Type: $TYPE"
+  local type_desc="$TYPE"
+  case "$TYPE" in
+    ds) type_desc="ds (daemonset)" ;;
+    cluster) type_desc="cluster (cluster agent)" ;;
+    both) type_desc="both (daemonset + cluster agent)" ;;
+  esac
+
+  echo "$HR_HEAVY"
+  echo "  ControlTheory Agent · Kubernetes Install"
+  echo "$HR_HEAVY"
+  echo ""
+  printf '  %-13s: %s\n' "Cluster" "$CLUSTER_NAME"
+  printf '  %-13s: %s\n' "Environment" "$DEPLOYMENT_ENV"
+  printf '  %-13s: %s\n' "Namespace" "$NAMESPACE"
+  printf '  %-13s: %s\n' "Type" "$type_desc"
   if [ "$HOST_PORT" = "true" ]; then
-    debug "Host Port: enabled (1757/1758)"
+    printf '  %-13s: %s\n' "Host Port" "1757/1758"
+  else
+    printf '  %-13s: %s\n' "Host Port" "disabled"
   fi
-  if [ -n "$KUBECONFIG_FILE" ]; then
-    debug "Kubeconfig: $KUBECONFIG_FILE"
-  fi
+  printf '  %-13s: %s\n' "Kubeconfig" "$KUBECONFIG_FILE"
   if [ -n "$HELM_VERSION" ]; then
-    debug "Helm Chart Version: $HELM_VERSION"
+    printf '  %-13s: %s\n' "Chart Version" "$HELM_VERSION"
   fi
+  echo ""
+  echo "$HR_LIGHT"
+  echo "  Installing"
+  echo "$HR_LIGHT"
 
   # Set up chart references
   if [ -n "$CT_CHARTS_PATH" ]; then
     # -- use local charts if you have them handy
-    debug "Charts: $CT_CHARTS_PATH (local)..."
     AIGENT_DS_CHART="$CT_CHARTS_PATH/aigent-ds"
     AIGENT_CLUSTER_CHART="$CT_CHARTS_PATH/aigent-cluster"
     if [ ! -d "$AIGENT_DS_CHART" ] || [ ! -d "$AIGENT_CLUSTER_CHART" ]; then
-      echo "Error: CT_CHARTS_PATH is set but charts not found at $CT_CHARTS_PATH"
+      printf '  ✗ Helm charts not found at %s\n' "$CT_CHARTS_PATH"
       exit 1
     fi
+    printf '  ✓ %-17s%s\n' "Helm charts" "local ($CT_CHARTS_PATH)"
   else
     # Published repo
-    debug "Charts: Adding ct-helm repository..."
-    run_cmd $HELM repo add ct-helm https://control-theory.github.io/helm-charts 2>/dev/null || true
-    run_cmd $HELM repo update ct-helm
     AIGENT_DS_CHART="ct-helm/aigent-ds"
     AIGENT_CLUSTER_CHART="ct-helm/aigent-cluster"
+    run_step "Helm repo" "ct-helm (updated)" helm_repo_setup
   fi
-  debug ""
 
   case "$TYPE" in
     ds)
@@ -532,23 +574,24 @@ k8s_install() {
       ;;
     both)
       k8s_install_ds
-      debug ""
       k8s_install_cluster
       ;;
   esac
 
-  debug ""
-  debug "Namespace: $NAMESPACE"
-  if [ "$TYPE" = "ds" ] || [ "$TYPE" = "both" ]; then
-    debug "DaemonSet Release: $RELEASE_NAME_DS"
+  echo ""
+  echo "$HR_LIGHT"
+  echo "  Install complete"
+  echo "$HR_LIGHT"
+  echo ""
+
+  # Only include --kubeconfig in the hint when a non-default path was given
+  local kubectl_hint="kubectl"
+  if [ -n "$KUBECONFIG_FILE" ] && [ "$KUBECONFIG_FILE" != "$HOME/.kube/config" ]; then
+    kubectl_hint="kubectl --kubeconfig $KUBECONFIG_FILE"
   fi
-  if [ "$TYPE" = "cluster" ] || [ "$TYPE" = "both" ]; then
-    debug "Cluster Agent Release: $RELEASE_NAME_CLUSTER"
-  fi
-  debug ""
-  debug "To check status:"
-  debug "  $KUBECTL get pods -n $NAMESPACE"
-  echo "ControlTheory Agent install done"
+  echo "  Check pod status:"
+  echo "    $kubectl_hint get pods -n $NAMESPACE"
+  echo ""
 }
 
 k8s_uninstall() {
@@ -1087,4 +1130,4 @@ else
 fi
 
 debug ""
-echo "Completed: $(date -u '+%Y-%m-%d %H:%M:%S UTC') | $VERSION"
+echo "  Completed: $(date -u '+%Y-%m-%d %H:%M:%S UTC')   $VERSION"
