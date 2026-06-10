@@ -435,8 +435,6 @@ k8s_install_ds() {
     --set daemonset.org_api_endpoint="$ORG_API_ENDPOINT"
     --set daemonset.cluster_name="$CLUSTER_NAME"
     --set daemonset.deployment_env="$DEPLOYMENT_ENV"
-    --set image.tag="dev"
-    --set image.repository="localhost:32000/aigent"
     --set daemonset.org_dns_id="$ORG_ID"
   )
 
@@ -474,8 +472,6 @@ k8s_install_cluster() {
     --set deployment.org_api_endpoint="$ORG_API_ENDPOINT"
     --set deployment.cluster_name="$CLUSTER_NAME"
     --set deployment.deployment_env="$DEPLOYMENT_ENV"
-    --set image.tag="dev"
-    --set image.repository="localhost:32000/aigent"
     --set deployment.org_dns_id="$ORG_ID"
   )
 
