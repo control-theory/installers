@@ -286,7 +286,8 @@ docker_install() {
     -e CT_ORG_DNS_ID=$ORG_ID \
     -e DEPLOYMENT_ENV=$DEPLOYMENT_ENV \
     -e K8S_NODE_NAME=$HOST_NAME \
-    -e HOST_NAME=$HOST_NAME"
+    -e HOST_NAME=$HOST_NAME \
+    -e SOURCE_TYPE=docker"
 
   # Default cluster name to "docker" for docker platform
   if [ -z "$CLUSTER_NAME" ]; then
@@ -299,10 +300,17 @@ docker_install() {
     DOCKER_CMD="$DOCKER_CMD -e SOURCE_ID=$SOURCE_ID"
   fi
 
+  AGENT_BASE_ID="docker-${ORG_ID}"
+  if [ -n "$SOURCE_ID" ]; then
+    AGENT_BASE_ID="docker-${ORG_ID}-${SOURCE_ID}"
+  fi
+  DOCKER_CMD="$DOCKER_CMD -e AGENT_BASE_ID=$AGENT_BASE_ID"
+
   DOCKER_CMD="$DOCKER_CMD \
     -p 4317:1757 \
     -p 4318:1758 \
-    ${DOCKER_IMAGE}:${DOCKER_IMAGE_TAG}"
+    ${DOCKER_IMAGE}:${DOCKER_IMAGE_TAG} \
+    --role aigent:docker"
 
   eval "$DOCKER_CMD"
 
