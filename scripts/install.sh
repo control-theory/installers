@@ -3,7 +3,7 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.4.5"
+VERSION="v1.4.6"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -434,6 +434,16 @@ quick_preflight_check() {
   fi
 }
 
+ensure_namespace() {
+  # Helm 4's --create-namespace is a no-op on `upgrade --install` (it does not
+  # create the release namespace), so create it explicitly with kubectl.
+  # Idempotent: ignore if it already exists.
+  if $KUBECTL get namespace "$NAMESPACE" >/dev/null 2>&1; then
+    return 0
+  fi
+  $KUBECTL create namespace "$NAMESPACE"
+}
+
 k8s_install_ds() {
   quick_preflight_check
 
@@ -470,7 +480,7 @@ k8s_install_ds() {
   fi
 
   run_step "AIgent DaemonSet" "$(printf '%-16s— node log collection' "$RELEASE_NAME_DS")" \
-    $HELM upgrade --install --create-namespace "$RELEASE_NAME_DS" "$AIGENT_DS_CHART" "${HELM_ARGS[@]}"
+    $HELM upgrade --install "$RELEASE_NAME_DS" "$AIGENT_DS_CHART" "${HELM_ARGS[@]}"
 }
 
 k8s_install_cluster() {
@@ -503,7 +513,7 @@ k8s_install_cluster() {
   fi
 
   run_step "Cluster Agent" "$(printf '%-16s— k8s events' "$RELEASE_NAME_CLUSTER")" \
-    $HELM upgrade --install --create-namespace "$RELEASE_NAME_CLUSTER" "$AIGENT_CLUSTER_CHART" "${HELM_ARGS[@]}"
+    $HELM upgrade --install "$RELEASE_NAME_CLUSTER" "$AIGENT_CLUSTER_CHART" "${HELM_ARGS[@]}"
 }
 
 k8s_uninstall_ds() {
@@ -568,6 +578,8 @@ k8s_install() {
     AIGENT_CLUSTER_CHART="ct-helm/aigent-cluster"
     run_step "Helm repo" "ct-helm (updated)" helm_repo_setup
   fi
+
+  run_step "Namespace" "$(printf '%-16s— created if absent' "$NAMESPACE")" ensure_namespace
 
   case "$TYPE" in
     ds)
