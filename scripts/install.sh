@@ -3,7 +3,7 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.4.6"
+VERSION="v1.4.7"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
