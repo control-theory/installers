@@ -23,7 +23,7 @@ ORG_API_ENDPOINT=""
 DATA_ENDPOINT=""
 DATA_TLS=""
 DOCKER_IMAGE="controltheory/aigent"
-DOCKER_IMAGE_TAG="v1.3.35"
+DOCKER_IMAGE_TAG="v1.3.38"
 
 # Defaults
 OPERATION="install"
@@ -36,6 +36,7 @@ ORG_ID=""
 CLUSTER_NAME=""
 DEPLOYMENT_ENV=""
 SOURCE_ID=""
+RELEASE_SUFFIX=""
 HELM_VERSION=""
 HELM_DEVEL="false"
 DEBUG="false"
@@ -111,7 +112,7 @@ Options:
 
 Options for docker platform:
       --docker-token <token>           Docker admission token (required for install)
-      --docker-tag <tag>               Docker image tag (default: v1.3.9)
+      --docker-tag <tag>               Docker image tag (default: ${DOCKER_IMAGE_TAG})
 
 Options for k8s platform:
       --ds-token <token>               DaemonSet admission token (required for ds/both)
@@ -120,6 +121,12 @@ Options for k8s platform:
       --no-host-port                   DO NOT Expose OTLP ports (1757/1758) on node for DaemonSet
       --kubeconfig <file>              Path to kubeconfig file (default: ~/.kube/config)
   -n, --namespace <namespace>          Kubernetes namespace (default: controltheory)
+      --release-suffix <suffix>        Suffix the Helm release names (aigent-ds-<suffix>).
+                                       Required to install a SECOND agent set into the
+                                       same cluster — ClusterRoles are named after the
+                                       release and are not namespaced, so a plain second
+                                       install fails on ownership metadata. Pair with
+                                       --no-host-port on the second install.
       --helm-version <version>         Helm chart version (default: latest stable)
       --data-endpoint <endpoint>       Data endpoint for local dev (e.g., butler.org.local:7761)
 
@@ -133,6 +140,11 @@ Examples:
   $0 -o status -p docker
   $0 -o preflight
   $0 -o preflight --kubeconfig ~/.kube/ctstage
+
+  # Second agent set in the same cluster, reporting to a different org:
+  $0 -i <org2> --ds-token <t1> --cluster-token <t2> --org-api-endpoint <url2> \\
+     --cluster-name mycluster -e stage --source-id <src2> \\
+     -n <ns2> --release-suffix <ns2> --no-host-port
 EOF
   exit 1
 }
@@ -202,6 +214,10 @@ while [ $# -gt 0 ]; do
       ;;
     -n|--namespace)
       NAMESPACE="$2"
+      shift 2
+      ;;
+    --release-suffix)
+      RELEASE_SUFFIX="$2"
       shift 2
       ;;
     --no-host-port)
@@ -307,9 +323,35 @@ if [ "$PLATFORM" = "k8s" ] && [ -n "$KUBECONFIG_FILE" ]; then
   HELM="helm --kubeconfig $KUBECONFIG_FILE"
 fi
 
-# Release names
-RELEASE_NAME_DS="aigent-ds"
-RELEASE_NAME_CLUSTER="aigent-cluster"
+# Release names.
+#
+# --release-suffix exists because BOTH charts name their cluster-scoped objects
+# after the release: ClusterRole "<release>-role" and ClusterRoleBinding
+# "<release>-rolebinding". ClusterRoles are not namespaced, so a second install
+# in a different namespace collides with the first no matter what -n says:
+#   Error: ClusterRole "aigent-ds-role" in namespace "" exists and cannot be
+#   imported into the current release: invalid ownership metadata; annotation
+#   "meta.helm.sh/release-namespace" must equal "<new>": current value is "<old>"
+# A distinct release name gives the second install its own cluster-scoped
+# names, so no chart change is needed.
+#
+# Use it to report one cluster into TWO orgs at once (a migration dual-report,
+# or prod + a staging tenant). Also pass --no-host-port on the second install:
+# the DaemonSet reads node logs from the /var/log hostPath, so it collects
+# everything independently, but only ONE DaemonSet per node can bind the
+# OTLP hostPorts 1757/1758 — the second would sit Pending forever.
+#
+# Empty by default, so single-install behavior is unchanged.
+if [ -n "$RELEASE_SUFFIX" ]; then
+  case "$RELEASE_SUFFIX" in
+    -*|*[!a-z0-9-]*)
+      echo "Error: --release-suffix must be lowercase alphanumeric or '-', and cannot start with '-': $RELEASE_SUFFIX"
+      exit 1
+      ;;
+  esac
+fi
+RELEASE_NAME_DS="aigent-ds${RELEASE_SUFFIX:+-$RELEASE_SUFFIX}"
+RELEASE_NAME_CLUSTER="aigent-cluster${RELEASE_SUFFIX:+-$RELEASE_SUFFIX}"
 CONTAINER_NAME="aigent"
 
 
@@ -548,6 +590,9 @@ k8s_install() {
   printf '  %-13s: %s\n' "Environment" "$DEPLOYMENT_ENV"
   printf '  %-13s: %s\n' "Namespace" "$NAMESPACE"
   printf '  %-13s: %s\n' "Type" "$type_desc"
+  if [ -n "$RELEASE_SUFFIX" ]; then
+    printf '  %-13s: %s\n' "Releases" "$RELEASE_NAME_DS / $RELEASE_NAME_CLUSTER"
+  fi
   if [ "$HOST_PORT" = "true" ]; then
     printf '  %-13s: %s\n' "Host Port" "1757/1758"
   else
