@@ -3,7 +3,7 @@ set -e
 
 # ControlTheory Agent Installation Script
 # Version
-VERSION="v1.4.7"
+VERSION="v1.4.8"
 # Supports both Docker and Kubernetes (Helm) installations
 #
 # Usage:
@@ -363,6 +363,25 @@ docker_install() {
   debug "Container Name: $CONTAINER_NAME"
   debug ""
 
+  # A container with this name stops `docker run`. A running one is an
+  # agent already installed here; a stopped one is what a failed install
+  # leaves behind (for example a host port was taken), so clear it.
+  if docker container inspect "$CONTAINER_NAME" > /dev/null 2>&1; then
+    if [ "$(docker container inspect -f '{{.State.Running}}' "$CONTAINER_NAME")" = "true" ]; then
+      echo "Error: the agent container '$CONTAINER_NAME' is already running on this host." >&2
+      echo "Run the uninstall command first, then install again." >&2
+      exit 1
+    fi
+    debug "Removing stopped container $CONTAINER_NAME left by an earlier install"
+    run_cmd docker rm "$CONTAINER_NAME"
+  fi
+
+  # The agent's state directory, as an absolute path: Docker before 23.0
+  # rejects a relative host path in -v.
+  DATA_DIR="$(pwd)/data"
+  mkdir -p "$DATA_DIR"
+  debug "Data directory: $DATA_DIR"
+
   # Capture hostname for container
   HOST_NAME=$(hostname)
 
@@ -373,7 +392,7 @@ docker_install() {
     --hostname "aigent-docker" \
     --restart unless-stopped \
     --privileged \
-    -v ./data:/data \
+    -v $(printf '%q' "$DATA_DIR"):/data \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v /var/lib/docker/containers:/var/lib/docker/containers:ro \
     -v /var/log:/var/log \
@@ -408,10 +427,18 @@ docker_install() {
     ${DOCKER_IMAGE}:${DOCKER_IMAGE_TAG} \
     --role aigent:docker"
 
+  # If the container is created but can't start (a host port is taken),
+  # remove it so the install can simply be run again.
+  local run_ok=true
   if [ "$DEBUG" = "true" ]; then
-    eval "$DOCKER_CMD"
+    eval "$DOCKER_CMD" || run_ok=false
   else
-    eval "$DOCKER_CMD" > /dev/null
+    eval "$DOCKER_CMD" > /dev/null || run_ok=false
+  fi
+  if [ "$run_ok" != "true" ]; then
+    docker rm -f "$CONTAINER_NAME" > /dev/null 2>&1 || true
+    echo "Error: the agent container could not start. Check that host ports 4317 and 4318 are free, then run the install again." >&2
+    exit 1
   fi
 
   debug ""
