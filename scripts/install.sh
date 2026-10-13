@@ -377,9 +377,9 @@ docker_install() {
   fi
 
   # The agent's state directory, as an absolute path: Docker before 23.0
-  # rejects a relative host path in -v.
+  # rejects a relative host path in -v. The daemon creates it if missing,
+  # as before (the caller may not be able to write here).
   DATA_DIR="$(pwd)/data"
-  mkdir -p "$DATA_DIR"
   debug "Data directory: $DATA_DIR"
 
   # Capture hostname for container
@@ -427,8 +427,8 @@ docker_install() {
     ${DOCKER_IMAGE}:${DOCKER_IMAGE_TAG} \
     --role aigent:docker"
 
-  # If the container is created but can't start (a host port is taken),
-  # remove it so the install can simply be run again.
+  # If the container is created but can't start (a host port is taken, for
+  # one), remove it so the install can simply be run again.
   local run_ok=true
   if [ "$DEBUG" = "true" ]; then
     eval "$DOCKER_CMD" || run_ok=false
@@ -437,7 +437,7 @@ docker_install() {
   fi
   if [ "$run_ok" != "true" ]; then
     docker rm -f "$CONTAINER_NAME" > /dev/null 2>&1 || true
-    echo "Error: the agent container could not start. Check that host ports 4317 and 4318 are free, then run the install again." >&2
+    echo "Error: the agent container could not start (see the Docker error above). If it says port 4317 or 4318 is already allocated, free that port and run the install again." >&2
     exit 1
   fi
 
