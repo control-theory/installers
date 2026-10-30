@@ -39,6 +39,8 @@ SOURCE_ID=""
 RELEASE_SUFFIX=""
 HELM_VERSION=""
 HELM_DEVEL="false"
+PROM_METRICS="false"
+PROM_METRICS_PORT=""
 DEBUG="false"
 
 # Print only in debug mode
@@ -128,6 +130,11 @@ Options for k8s platform:
                                        install fails on ownership metadata. Pair with
                                        --no-host-port on the second install.
       --helm-version <version>         Helm chart version (default: latest stable)
+      --prom-metrics                   Allow Prometheus metrics: grants the RBAC to scrape kubelet and
+                                       discover targets, and opens the remote_write port on the
+                                       DaemonSet (what is collected is set on the source)
+      --prom-metrics-port <port>       Prometheus remote_write port on the DaemonSet, 1024-65535
+                                       (default: 9090). Needs --prom-metrics; must match the source
       --data-endpoint <endpoint>       Data endpoint for local dev (e.g., butler.org.local:7761)
 
 Examples:
@@ -232,6 +239,14 @@ while [ $# -gt 0 ]; do
       HELM_DEVEL="true"
       shift 1
       ;;
+    --prom-metrics)
+      PROM_METRICS="true"
+      shift 1
+      ;;
+    --prom-metrics-port)
+      PROM_METRICS_PORT="$2"
+      shift 2
+      ;;
     -d|--debug)
       DEBUG="true"
       shift 1
@@ -287,6 +302,19 @@ validate_config() {
   if [ -z "$DEPLOYMENT_ENV" ]; then
     echo "Error: -e/--env is required for install"
     usage
+  fi
+
+  if [ -n "$PROM_METRICS_PORT" ]; then
+    if ! [[ "$PROM_METRICS_PORT" =~ ^[0-9]{1,5}$ ]] || [ "$PROM_METRICS_PORT" -lt 1024 ] || [ "$PROM_METRICS_PORT" -gt 65535 ]; then
+      echo "Error: --prom-metrics-port must be a number from 1024 to 65535: $PROM_METRICS_PORT"
+      usage
+    fi
+    if [ "$PROM_METRICS" != "true" ]; then
+      echo "Note: --prom-metrics-port has no effect without --prom-metrics"
+    fi
+  fi
+  if [ "$PROM_METRICS" = "true" ] && [ "$PLATFORM" = "docker" ]; then
+    echo "Note: --prom-metrics applies to the k8s platform only; ignored for docker"
   fi
 
   # Validate tokens
@@ -541,6 +569,13 @@ k8s_install_ds() {
     HELM_ARGS+=(--set hostPort.enabled=true)
   fi
 
+  if [ "$PROM_METRICS" = "true" ]; then
+    HELM_ARGS+=(--set promMetrics.enabled=true)
+    if [ -n "$PROM_METRICS_PORT" ]; then
+      HELM_ARGS+=(--set "promMetrics.remoteWritePort=$PROM_METRICS_PORT")
+    fi
+  fi
+
   if [ -n "$HELM_VERSION" ]; then
     HELM_ARGS+=(--version "$HELM_VERSION")
   fi
@@ -572,6 +607,11 @@ k8s_install_cluster() {
   # Pass source ID when provided (source-backed install)
   if [ -n "$SOURCE_ID" ]; then
     HELM_ARGS+=(--set deployment.source_id="$SOURCE_ID")
+  fi
+
+  # The cluster agent needs the RBAC but has no remote_write port.
+  if [ "$PROM_METRICS" = "true" ]; then
+    HELM_ARGS+=(--set promMetrics.enabled=true)
   fi
 
   if [ -n "$HELM_VERSION" ]; then
