@@ -259,8 +259,12 @@ while [ $# -gt 0 ]; do
       exit 0
       ;;
     *)
-     shift 1
-     ;;
+      # An ignored flag can look like a successful install that quietly lacks
+      # what the flag asked for (e.g. --prom-metrics on an older installer).
+      echo "Error: unknown option: $1" >&2
+      echo "" >&2
+      usage
+      ;;
   esac
 done
 
