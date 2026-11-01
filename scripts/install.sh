@@ -153,7 +153,7 @@ Examples:
      --cluster-name mycluster -e stage --source-id <src2> \\
      -n <ns2> --release-suffix <ns2> --no-host-port
 EOF
-  exit 1
+  exit "${1:-1}"
 }
 
 # Parse arguments
@@ -252,7 +252,7 @@ while [ $# -gt 0 ]; do
       shift 1
       ;;
     -h|--help)
-      usage
+      usage 0
       ;;
     -v|--version)
       echo "$VERSION"
@@ -262,8 +262,8 @@ while [ $# -gt 0 ]; do
       # An ignored flag can look like a successful install that quietly lacks
       # what the flag asked for (e.g. --prom-metrics on an older installer).
       echo "Error: unknown option: $1" >&2
-      echo "" >&2
-      usage
+      echo "Run with --help to see the options." >&2
+      exit 1
       ;;
   esac
 done
