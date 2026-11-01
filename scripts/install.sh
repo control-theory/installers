@@ -130,12 +130,14 @@ Options for k8s platform:
                                        install fails on ownership metadata. Pair with
                                        --no-host-port on the second install.
       --helm-version <version>         Helm chart version (default: latest stable)
+      --devel                          Allow pre-release Helm chart versions (stage installs)
       --prom-metrics                   Allow Prometheus metrics: grants the RBAC to scrape kubelet and
                                        discover targets, and opens the remote_write port on the
                                        DaemonSet (what is collected is set on the source)
       --prom-metrics-port <port>       Prometheus remote_write port on the DaemonSet, 1024-65535
                                        (default: 9090). Needs --prom-metrics; must match the source
       --data-endpoint <endpoint>       Data endpoint for local dev (e.g., butler.org.local:7761)
+      --data-tls <true|false>          TLS to the data endpoint (local dev; default: the chart's)
 
 Examples:
   $0 -i okz30akqj --ds-token <t1> --cluster-token <t2> --org-api-endpoint <url> --cluster-name mycluster -e prod
@@ -153,11 +155,25 @@ Examples:
      --cluster-name mycluster -e stage --source-id <src2> \\
      -n <ns2> --release-suffix <ns2> --no-host-port
 EOF
-  exit 1
+  exit "${1:-1}"
 }
 
 # Parse arguments
 while [ $# -gt 0 ]; do
+  # A value flag at the end of the line, or followed by another flag, would
+  # otherwise exit silently (set -e on shift 2) or take the flag as its value.
+  case "$1" in
+    -o|--operation|-p|--platform|-t|--type|--docker-token|--docker-tag|--ds-token|\
+    --cluster-token|--org-api-endpoint|-i|--org-id|-e|--env|--cluster-name|--source-id|\
+    --data-endpoint|--data-tls|--kubeconfig|-n|--namespace|--release-suffix|--helm-version|\
+    --prom-metrics-port)
+      if [ $# -lt 2 ] || [ "${2#-}" != "$2" ]; then
+        echo "Error: $1 needs a value" >&2
+        echo "Run with --help to see the options." >&2
+        exit 1
+      fi
+      ;;
+  esac
   case "$1" in
     -o|--operation)
       OPERATION="$2"
@@ -252,15 +268,19 @@ while [ $# -gt 0 ]; do
       shift 1
       ;;
     -h|--help)
-      usage
+      usage 0
       ;;
     -v|--version)
       echo "$VERSION"
       exit 0
       ;;
     *)
-     shift 1
-     ;;
+      # An ignored flag can look like a successful install that quietly lacks
+      # what the flag asked for (e.g. --prom-metrics on an older installer).
+      echo "Error: unknown option: $1" >&2
+      echo "Run with --help to see the options." >&2
+      exit 1
+      ;;
   esac
 done
 
